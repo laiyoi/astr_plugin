@@ -1,0 +1,26 @@
+[project]
+name = "astr-plugin"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "laiyoi", email = "zz15091429981@163.com" }
+]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "onnxruntime>=1.20,<2",
+    "numpy>=1.26,<3",
+    "Pillow>=10.0",
+    "aiohttp>=3.8",
+    "tokenizers>=0.20,<1",
+    "astrbot>=4.14.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+default-groups = ["dev"]

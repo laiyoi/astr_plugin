@@ -1,0 +1,37 @@
+name: astrbot_plugin_img_curator
+display_name: 本地图片筛选收藏
+author: local
+author_url: ""
+desc: 在 CPU 上用本地 ONNX 视觉模型筛选群图片/短视频，收藏高置信度候选；不确定图片进入人工确认。图片以 UUID 命名，元数据写入 CSV/SQLite。短视频抽帧后只保存最佳帧。无云端 API、无 GPU、无群号白名单。
+short_desc: 本地 ONNX 图片筛选收藏，UUID 命名 + CSV 元数据。
+repo: ""
+category: 娱乐
+tags:
+  - 图片
+  - 收藏
+  - ONNX
+  - CPU
+  - 本地模型
+  - 群聊
+  - 人工审核
+help: |
+  本地图片筛选收藏（仅管理员命令）：
+  /imgfilter status          查看运行状态与计数
+  /imgfilter model [load]    查看/加载模型
+  /imgfilter stats           查看耗时统计
+  /imgfilter pending         查看待确认图片
+  /imgfilter pause|resume    暂停/恢复识别
+  /imgfilter test            测试当前附带图片/短视频（不保存）
+  /imgfilter forward [分钟]  开始接收当前群/私聊的合并聊天记录，图片存为训练集（unlabeled）
+  /imgfilter forward_status  查看合并记录采集状态
+  /imgfilter forward_cancel  停止当前会话采集
+  /imgfilter confirm <ID>    将待确认图片移入收藏
+  /imgfilter reject <ID>     删除待确认图片并标记负样本
+
+  图片保存为 <UUID>.<jpg|png|webp>，不再按日期/群号分目录。
+  metadata.csv 记录发送者昵称、QQ、群名、群号、分数与耗时。
+  首次启用会自动下载约 153 MB 的 ONNX 模型，之后完全离线。
+version: 1.0.0
+support_platforms:
+  - aiocqhttp
+astrbot_version: ">=4.24.1"

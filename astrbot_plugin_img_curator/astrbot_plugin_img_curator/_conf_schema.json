@@ -1,0 +1,363 @@
+{
+  "_general": {
+    "description": "=== 基础设置 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "enabled": {
+    "description": "启用插件",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后不接收合并记录，也不处理图片。默认处理所有群，没有群号白名单。"
+  },
+  "recognition_enabled": {
+    "description": "启用图片/视频识别",
+    "type": "bool",
+    "default": false,
+    "hint": "当前阶段只采集训练集时保持关闭：不下载、不加载、不读取视觉模型。训练完成并部署 ONNX 后再打开。"
+  },
+  "save_dir": {
+    "description": "收藏图片保存目录",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用插件数据目录下的 images。图片统一保存为 <UUID>.<扩展名>，不再按日期或群号分目录。相对路径相对于插件数据目录。"
+  },
+  "pending_dir": {
+    "description": "待确认图片目录",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用插件数据目录下的 pending。"
+  },
+  "save_pending": {
+    "description": "保存不确定图片到待确认目录",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后不确定图片直接丢弃，不写文件也不写 CSV。"
+  },
+  "strip_metadata": {
+    "description": "保存前移除 EXIF/GPS 等元数据",
+    "type": "bool",
+    "default": true,
+    "hint": "默认重新编码并移除 EXIF/GPS；会轻微改变 JPEG/WEBP 画质，但避免泄露拍摄地点和设备信息。关闭则原样保存。"
+  },
+  "dedupe": {
+    "description": "按 SHA-256 去重",
+    "type": "bool",
+    "default": true,
+    "hint": "相同图片只识别一次；重复图片直接跳过，不重复保存。"
+  },
+  "max_file_mb": {
+    "description": "单张图片最大体积（MB）",
+    "type": "int",
+    "default": 12,
+    "slider": {
+      "min": 1,
+      "max": 100,
+      "step": 1
+    },
+    "hint": "超过限制的图片在下载过程中即中止。"
+  },
+  "max_video_mb": {
+    "description": "单个视频最大体积（MB）",
+    "type": "int",
+    "default": 50,
+    "slider": {
+      "min": 1,
+      "max": 500,
+      "step": 1
+    },
+    "hint": "视频只用来抽帧，不会归档；超过限制直接跳过。"
+  },
+  "video_max_seconds": {
+    "description": "视频最多解码前 N 秒",
+    "type": "int",
+    "default": 15,
+    "slider": {
+      "min": 1,
+      "max": 300,
+      "step": 1
+    },
+    "hint": "避免长视频拖慢 CPU。"
+  },
+  "video_max_frames": {
+    "description": "每个视频最多抽帧数",
+    "type": "int",
+    "default": 8,
+    "slider": {
+      "min": 1,
+      "max": 32,
+      "step": 1
+    },
+    "hint": "帧越多越慢；8 帧约等于每秒 1 帧、最多 8 秒。"
+  },
+  "video_fps": {
+    "description": "视频抽帧频率（帧/秒）",
+    "type": "float",
+    "default": 1.0,
+    "slider": {
+      "min": 0.1,
+      "max": 10.0,
+      "step": 0.1
+    }
+  },
+  "video_extract_timeout_sec": {
+    "description": "单个视频抽帧超时（秒）",
+    "type": "int",
+    "default": 60,
+    "slider": {
+      "min": 5,
+      "max": 600,
+      "step": 5
+    },
+    "hint": "超时则整个视频跳过，不保存。"
+  },
+  "forward_dir": {
+    "description": "合并聊天记录训练图片目录",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用插件数据目录下的 training_data/forwarded。收到的图片保存为 unlabeled，附 metadata.jsonl，不会进入正式收藏。"
+  },
+  "forward_max_minutes": {
+    "description": "合并记录采集单次最长分钟数",
+    "type": "int",
+    "default": 60,
+    "slider": {
+      "min": 1,
+      "max": 1440,
+      "step": 1
+    }
+  },
+  "forward_max_images": {
+    "description": "单批合并记录最多保存图片数",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 1,
+      "max": 10000,
+      "step": 10
+    }
+  },
+  "forward_max_nodes": {
+    "description": "单批合并记录最多节点数",
+    "type": "int",
+    "default": 2000,
+    "slider": {
+      "min": 1,
+      "max": 100000,
+      "step": 100
+    }
+  },
+  "forward_max_depth": {
+    "description": "合并记录最大嵌套深度",
+    "type": "int",
+    "default": 8,
+    "slider": {
+      "min": 1,
+      "max": 32,
+      "step": 1
+    }
+  },
+  "_model": {
+    "description": "=== 模型设置 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "model_name": {
+    "description": "本地模型",
+    "type": "string",
+    "default": "CLIP-ViT-B-32",
+    "options": [
+      "CLIP-ViT-B-32",
+      "MobileCLIP-S0"
+    ],
+    "labels": [
+      "OpenCLIP ViT-B/32（推荐）",
+      "Apple MobileCLIP-S0（更小）"
+    ],
+    "hint": "默认 ViT-B/32 fp32：608 MB 权重，在 4C/6GB 虚拟机上实测约 292 ms/张，116 张验收集上召回率明显高于 int8。MobileCLIP-S0 更小，但区分度不足。"
+  },
+  "model_variant": {
+    "description": "ONNX 精度",
+    "type": "string",
+    "default": "fp32",
+    "options": [
+      "fp32",
+      "int8"
+    ],
+    "labels": [
+      "fp32 全精度（推荐）",
+      "int8 动态量化（省内存）"
+    ],
+    "hint": "ViT-B/32：fp32 约 608 MB，int8 约 156 MB。默认 fp32 以提高召回率；内存紧张时切 int8。修改后需重新下载对应权重。"
+  },
+  "model_dir": {
+    "description": "模型根目录",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用插件数据目录下的 models。每个模型会放在其子目录中。"
+  },
+  "auto_download_model": {
+    "description": "识别启用时自动下载模型",
+    "type": "bool",
+    "default": false,
+    "hint": "从 Hugging Face 下载并校验 SHA-256；下载完成后完全离线运行。"
+  },
+  "download_timeout_sec": {
+    "description": "模型下载超时（秒）",
+    "type": "int",
+    "default": 600,
+    "slider": {
+      "min": 30,
+      "max": 3600,
+      "step": 30
+    }
+  },
+  "_thresholds": {
+    "description": "=== 判定阈值 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "high_threshold": {
+    "description": "自动收藏阈值（正分 - 负分 margin）",
+    "type": "float",
+    "default": 0.011,
+    "slider": {
+      "min": 0.0,
+      "max": 0.2,
+      "step": 0.001
+    },
+    "hint": "基于 116 张验收集的初值：precision≈0.96、recall≈0.67。CLIP 相似度不是概率，换数据后需重新校准。"
+  },
+  "pending_threshold": {
+    "description": "待确认阈值（margin）",
+    "type": "float",
+    "default": 0.005,
+    "slider": {
+      "min": 0.0,
+      "max": 0.2,
+      "step": 0.001
+    },
+    "hint": "margin 低于此值判为不符合，直接删除；介于该值与自动收藏阈值之间进入待确认。"
+  },
+  "min_positive_score": {
+    "description": "自动收藏的最低正分",
+    "type": "float",
+    "default": 0.24,
+    "slider": {
+      "min": 0.0,
+      "max": 0.6,
+      "step": 0.005
+    },
+    "hint": "防止风景/宠物等图片因 margin 偶然偏高而被收藏。"
+  },
+  "min_pending_score": {
+    "description": "进入待确认的最低正分",
+    "type": "float",
+    "default": 0.21,
+    "slider": {
+      "min": 0.0,
+      "max": 0.6,
+      "step": 0.005
+    }
+  },
+  "_resources": {
+    "description": "=== 性能与队列 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "cpu_threads": {
+    "description": "CPU 推理线程数",
+    "type": "int",
+    "default": 4,
+    "slider": {
+      "min": 1,
+      "max": 16,
+      "step": 1
+    },
+    "hint": "建议不超过物理核心数；4 vCPU 环境用 3~4。"
+  },
+  "queue_size": {
+    "description": "处理队列容量",
+    "type": "int",
+    "default": 64,
+    "slider": {
+      "min": 1,
+      "max": 1024,
+      "step": 1
+    },
+    "hint": "队列满时直接丢弃新图片并计数，避免内存上涨。"
+  },
+  "rate_limit_count": {
+    "description": "每群时间窗内最多处理张数",
+    "type": "int",
+    "default": 20,
+    "slider": {
+      "min": 1,
+      "max": 500,
+      "step": 1
+    }
+  },
+  "rate_limit_window_sec": {
+    "description": "每群限流时间窗（秒）",
+    "type": "int",
+    "default": 60,
+    "slider": {
+      "min": 1,
+      "max": 3600,
+      "step": 1
+    }
+  },
+  "max_pending_files": {
+    "description": "待确认目录最大文件数",
+    "type": "int",
+    "default": 500,
+    "slider": {
+      "min": 0,
+      "max": 10000,
+      "step": 10
+    },
+    "hint": "达到上限后新的不确定图片会被丢弃；0 表示不限制。"
+  },
+  "max_image_pixels_million": {
+    "description": "最大解码像素（百万）",
+    "type": "int",
+    "default": 40,
+    "slider": {
+      "min": 1,
+      "max": 200,
+      "step": 1
+    },
+    "hint": "防止超大图片解码耗尽内存。"
+  },
+  "min_image_side": {
+    "description": "最小边长（像素）",
+    "type": "int",
+    "default": 64,
+    "slider": {
+      "min": 1,
+      "max": 1024,
+      "step": 1
+    }
+  },
+  "image_download_timeout_sec": {
+    "description": "图片下载超时（秒）",
+    "type": "int",
+    "default": 30,
+    "slider": {
+      "min": 5,
+      "max": 300,
+      "step": 5
+    }
+  },
+  "_logging": {
+    "description": "=== 日志与元数据 ===",
+    "type": "text",
+    "invisible": true
+  },
+  "csv_path": {
+    "description": "CSV 元数据路径",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用插件数据目录下的 metadata.csv。CSV 包含发送者昵称/QQ/群名/群号，请勿公开传播。"
+  }
+}

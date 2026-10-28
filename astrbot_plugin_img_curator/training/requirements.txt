@@ -1,0 +1,11 @@
+# Windows training environment.  RTX 5070 (Blackwell, sm_120) needs a
+# PyTorch build with CUDA 12.8 or newer; install torch/torchvision from
+# https://download.pytorch.org/whl/cu128 first, then this file.
+torch>=2.7.0
+torchvision>=0.22.0
+timm>=1.0.15,<2
+numpy>=1.26,<3
+Pillow>=10.0
+onnx>=1.17,<2
+onnxruntime>=1.20,<2
+tqdm>=4.66
