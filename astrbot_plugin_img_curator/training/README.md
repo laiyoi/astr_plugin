@@ -91,19 +91,22 @@ python training\preprocess.py
   "video_max_frames": 8,
   "video_max_seconds": 15,
   "video_fps": 1.0,
+  "resize_size": 256,
+  "jpeg_quality": 95,
   "clean": false
 }
 ```
 
 处理规则：
 
-- 图片/GIF：原文件按内容哈希复制，不抽帧、不转码；
-- 视频：`core.video.extract_frames()` 抽帧，帧保存为 JPEG；
+- 图片/GIF：先缩放再保存为 JPEG（默认最长边 256，质量 95），GIF 只取首帧用于训练；
+- 视频：`core.video.extract_frames()` 抽帧，帧同样缩放为 256 内的 JPEG；
 - 同一视频的所有帧分到同一个 split，避免泄漏；
 - 按 `collect` / `suspicious` / `skip` 分层划分 train/val/test，默认 70/15/15；
 - 输出 `training/dataset/preprocess_report.json`；
 - `clean: true` 会先删除整个输出目录，慎用；
-- 超大/损坏图片会按 `max_image_pixels`（默认 4000 万像素）跳过并打印路径。
+- 超大/损坏图片会按 `max_image_pixels`（默认 4000 万像素）跳过并打印路径；
+- 预处理产物统一为小尺寸 JPEG，DataLoader 不再解码原始大图。
 
 处理完成后目录就是训练脚本需要的 `train/val/test/{collect,suspicious,skip}` 结构。
 

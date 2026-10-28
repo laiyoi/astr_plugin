@@ -9,7 +9,9 @@
     "video_max_seconds": 15,
     "video_fps": 1.0,
     "clean": false,
-    "max_image_pixels": 40000000
+    "max_image_pixels": 40000000,
+    "resize_size": 256,
+    "jpeg_quality": 95
   },
   "train": {
     "data_root": "dataset",

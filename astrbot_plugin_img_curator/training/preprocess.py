@@ -40,7 +40,7 @@ _PLUGIN_ROOT = _SCRIPT_DIR.parent / "astrbot_plugin_img_curator"
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageOps  # noqa: E402
 
 from core.video import VIDEO_SUFFIXES, extract_frames, ffmpeg_available  # noqa: E402
 
@@ -160,12 +160,20 @@ def assign_splits(items: list[Item], *, val_ratio: float, test_ratio: float, see
                 item.split = split
 
 
-def preprocess_image(item: Item, output_root: Path) -> Path:
+def _save_scaled(src: Path, target: Path, resize_size: int, quality: int) -> None:
+    with Image.open(src) as image:
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.thumbnail((resize_size, resize_size), Image.Resampling.LANCZOS)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        image.save(target, format="JPEG", quality=quality, optimize=True)
+
+
+def preprocess_image(item: Item, output_root: Path, args: SimpleNamespace) -> Path:
     target_dir = output_root / item.split / CLASS_NAMES[item.label]
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{item.sha256[:16]}{item.path.suffix.lower()}"
+    target = target_dir / f"{item.sha256[:16]}.jpg"
     if not target.exists():
-        shutil.copy2(item.path, target)
+        _save_scaled(item.path, target, args.resize_size, args.jpeg_quality)
     return target
 
 
@@ -185,7 +193,7 @@ def preprocess_video(item: Item, output_root: Path, args: SimpleNamespace) -> li
         for index, frame in enumerate(frames):
             target = target_dir / f"{item.sha256[:12]}_{index:03d}_{frame.time_sec:06.2f}.jpg"
             if not target.exists():
-                shutil.copy2(frame.path, target)
+                _save_scaled(frame.path, target, args.resize_size, args.jpeg_quality)
             outputs.append(target)
         return outputs
     finally:
@@ -219,7 +227,7 @@ def main() -> int:
                 outputs = preprocess_video(item, args.output_root, args)
                 count = len(outputs)
             else:
-                preprocess_image(item, args.output_root)
+                preprocess_image(item, args.output_root, args)
                 count = 1
             bucket = report["splits"].setdefault(
                 item.split,
