@@ -1,6 +1,8 @@
 """Dataset scanning, exact+near duplicate removal, and torch Datasets.
 
-Split layout (required):
+Two supported layouts:
+
+1. Already split:
 
     data_root/
       train/collect/*.jpg
@@ -10,6 +12,12 @@ Split layout (required):
       test/collect/*.jpg
       test/skip/*.jpg
 
+2. Flat, auto-split by the training script:
+
+    data_root/
+      collect/*.jpg
+      skip/*.jpg
+
 `collect` is positive (label 1), `skip` is negative (label 0).
 """
 
@@ -17,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -91,6 +100,79 @@ def discover_records(data_root: Path) -> list[Record]:
         record.sha256 = sha256_file(record.path)
         record.dhash = dhash(record.path)
     return records
+
+
+def discover_flat_records(data_root: Path) -> list[Record]:
+    """Discover a flat collect/skip dataset and assign no real split yet."""
+    records: list[Record] = []
+    for class_name, label in CLASS_TO_INDEX.items():
+        directory = data_root / class_name
+        if not directory.is_dir():
+            raise FileNotFoundError(
+                f"missing directory: {directory} (use train/val/test layout or --auto-split)"
+            )
+        for path in sorted(directory.rglob("*")):
+            if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+                records.append(Record(path=path, label=label, split="train"))
+    if not records:
+        raise ValueError("no images found")
+    for record in records:
+        record.sha256 = sha256_file(record.path)
+        record.dhash = dhash(record.path)
+    return records
+
+
+def auto_split_records(
+    records: list[Record],
+    *,
+    val_ratio: float = 0.15,
+    test_ratio: float = 0.15,
+    seed: int = 42,
+) -> list[Record]:
+    """Stratified train/val/test split for a flattened, already-deduped set."""
+    if not 0 <= val_ratio < 1 or not 0 <= test_ratio < 1:
+        raise ValueError("val/test ratios must be in [0, 1)")
+    if val_ratio + test_ratio >= 1:
+        raise ValueError("val_ratio + test_ratio must be < 1")
+
+    rng = random.Random(seed)
+    for label in (0, 1):
+        group = [r for r in records if r.label == label and not r.removed]
+        if len(group) < 3:
+            raise ValueError(
+                f"class {INDEX_TO_CLASS[label]} needs at least 3 images for train/val/test"
+            )
+        rng.shuffle(group)
+        n = len(group)
+        n_val = max(1, round(n * val_ratio))
+        n_test = max(1, round(n * test_ratio))
+        while n_val + n_test >= n:
+            if n_val >= n_test and n_val > 1:
+                n_val -= 1
+            elif n_test > 1:
+                n_test -= 1
+            else:
+                break
+        for index, record in enumerate(group):
+            if index < n_val:
+                record.split = "val"
+            elif index < n_val + n_test:
+                record.split = "test"
+            else:
+                record.split = "train"
+    return records
+
+
+def update_report_kept(report: DedupeReport, records: Iterable[Record]) -> None:
+    final = [r for r in records if not r.removed]
+    report.kept = {
+        split: {
+            "total": len([r for r in final if r.split == split]),
+            "collect": len([r for r in final if r.split == split and r.label == 1]),
+            "skip": len([r for r in final if r.split == split and r.label == 0]),
+        }
+        for split in SPLITS
+    }
 
 
 def dedupe_records(records: Iterable[Record], threshold: int = 6) -> tuple[list[Record], DedupeReport]:

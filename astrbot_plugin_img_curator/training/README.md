@@ -37,9 +37,11 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 
 ## 2. 数据来源与目录
 
-可以用插件的合并记录采集作为原始来源：在群里发送 `/imgfilter forward 10`，再发合并聊天记录；图片会写到 `training_data/forwarded/<batch>/images/`，并附 `metadata.jsonl`。之后人工把它们分配到 `train/val/test` 的 `collect`/`skip`。
+可以用插件的合并记录采集作为原始来源：在群里发送 `/imgfilter forward 10`，再发合并聊天记录；**所有图片会平铺保存到 `training_data/forwarded/images/`**，每批的 `metadata.jsonl` 仍放在 `training_data/forwarded/<batch_id>/`。之后按 `collect` / `skip` 分好类即可。
 
-必须人工标注成 `collect` / `skip` 两类。建议先按来源/人物分好 train/val/test，再交给脚本做重复检查。
+必须人工标注成 `collect` / `skip` 两类。现在支持两种目录：
+
+**A. 已手动分好 train/val/test**
 
 ```text
 D:\data\taste\
@@ -54,6 +56,22 @@ D:\data\taste\
     skip\
 ```
 
+**B. 只分 collect/skip，训练时自动划分**
+
+```text
+D:\data\taste\
+  collect\
+  skip\
+```
+
+自动划分是分层抽样，按类别分别切分，默认：
+
+```text
+train 70% / val 15% / test 15%
+```
+
+并先做去重再划分，避免同一张图跨 split。
+
 要求：
 
 - `collect` 为正类，`skip` 为负类；
@@ -61,7 +79,8 @@ D:\data\taste\
 - 视频帧要按视频分组，同一视频的帧不要跨 split；
 - 同一人物/同一组连拍尽量放在同一侧；
 - 脚本会做 SHA-256 精确去重 + dHash 近似去重（默认汉明距离 ≤6），并写 `dedupe_report.json`；
-- 跨 split 重复时优先保留 train，删除 val/test 的重复项；
+- 自动划分模式会先对全部数据去重，再按类别分层切分；
+- 手动划分模式跨 split 重复时优先保留 train，删除 val/test 的重复项；
 - **测试集被去重删除的图会记录在报告里，但不会用于调参。**
 
 ---
@@ -72,6 +91,7 @@ D:\data\taste\
 python training\train.py `
   --data-root D:\data\taste `
   --output-dir D:\runs\taste_dinov2_v1 `
+  --auto-split `
   --epochs 30 `
   --batch-size 32 `
   --image-size 224 `
@@ -79,6 +99,26 @@ python training\train.py `
   --amp `
   --num-workers 4
 ```
+
+如果目录已经是 `train/val/test`，去掉 `--auto-split` 即可。自动划分的比例可调：
+
+```powershell
+--val-ratio 0.15 --test-ratio 0.15 --split-seed 42
+```
+
+TensorBoard 默认开启，日志写到：
+
+```text
+<output-dir>\tensorboard
+```
+
+启动：
+
+```powershell
+tensorboard --logdir D:\runs\taste_dinov2_v1\tensorboard
+```
+
+不需要时加 `--no-tensorboard`，或指定目录 `--tensorboard-dir D:\runs\tb`。
 
 默认：
 

@@ -141,7 +141,8 @@ class ForwardCollectorTests(unittest.TestCase):
             saved = [r for r in rows if r["status"] == "saved"]
             self.assertEqual(len(saved), 1)
             self.assertEqual(saved[0]["node_sender_name"], "妖")
-            self.assertEqual(len(list((cfg.forward_dir).rglob("*.jpg"))), 1)
+            self.assertTrue(saved[0]["file"].startswith("images/"))
+            self.assertEqual(len(list((cfg.forward_dir / "images").glob("*.jpg"))), 1)
 
     def test_nested_forward_content_does_not_fetch_again(self):
         with tempfile.TemporaryDirectory() as tmp:

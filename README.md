@@ -5,9 +5,12 @@
 ## 目录
 
 ```text
-astrbot_plugin_img_curator/   # 插件本体：安装到 AstrBot 只需要这个目录
-training/                     # Windows + CUDA 训练、评估、ONNX 导出
+astrbot_plugin_img_curator/
+  astrbot_plugin_img_curator/ # 插件本体：安装到 AstrBot 只需要这层
+  training/                   # Windows + CUDA 训练、评估、ONNX 导出
+  tests/
 .vscode/                      # 本地调试 AstrBot 的配置
+install.sh                    # 只复制插件源码到 ~/astrbot/data/plugins
 pyproject.toml                # 本地开发环境（uv），不含 torch
 ```
 
@@ -19,11 +22,23 @@ numpy
 Pillow
 ```
 
-安装插件不需要 PyTorch、CUDA、torchvision 或训练脚本。训练相关依赖全部在 `training/requirements.txt`，只在 Windows 训练机安装。
+安装插件不需要 PyTorch、CUDA、torchvision 或训练脚本。训练相关依赖全部在 `astrbot_plugin_img_curator/training/requirements.txt`，只在 Windows 训练机安装。
 
 ## 插件安装
 
-把 `astrbot_plugin_img_curator/` 放到 AstrBot 的插件目录，然后重启/重载插件。
+运行：
+
+```bash
+./install.sh
+```
+
+默认复制到：
+
+```text
+~/astrbot/data/plugins/astrbot_plugin_img_curator
+```
+
+可用 `ASTRBOT_DATA_DIR` 覆盖 AstrBot 数据目录。脚本只复制内层插件源码，不会带上 `training/`、`tests/`。
 
 当前阶段默认：
 
@@ -50,7 +65,7 @@ Pillow
 
 训练与插件完全分开：
 
-- 训练：Windows + PyTorch + CUDA，见 [`training/README.md`](training/README.md)
+- 训练：Windows + PyTorch + CUDA，见 [`astrbot_plugin_img_curator/training/README.md`](astrbot_plugin_img_curator/training/README.md)
 - 部署：Ubuntu/N100，只把导出的 `.onnx` 放进插件模型目录
 
 不要把 `training/` 复制进插件目录，也不要让插件导入 torch。

@@ -73,7 +73,7 @@ MobileCLIP-S0 更小、fp32 单张更快，但在早期 37 张冒烟集上 AUC �
    - 其它：删除临时文件，只记录哈希。
 7. 图片/视频最佳帧都用 UUID 重命名，写入 `images/` 或 `pending/`；SQLite 记录 `source_type=image|video_frame`、`frame_time`、哈希、分数、耗时；CSV 由 SQLite 原子重写。
 8. 网络/模型/格式异常一律**不保存**，只增加错误计数。
-9. 管理员用 `/imgfilter forward [分钟]` 开启采集后，当前群或私聊里的合并聊天记录会被单独解析；图片保存到 `training_data/forwarded/<batch>/`，附发送者/群/嵌套路径元数据，不进入正式收藏。
+9. 管理员用 `/imgfilter forward [分钟]` 开启采集后，当前群或私聊里的合并聊天记录会被单独解析；图片平铺保存到 `training_data/forwarded/images/`，每批元数据在 `training_data/forwarded/<batch_id>/`，不进入正式收藏。
 
 ---
 
@@ -290,7 +290,7 @@ int8 放到 `models/clip_vit_b32_int8/`，文件名同样是上面三个。
 - 私聊只处理合并记录，不处理普通私聊图片；
 - 自动处理 `Nodes`/`Node`，遇到只有 `Forward(id)` 的段会调用 OneBot `get_forward_msg` 拉取；
 - 支持嵌套转发，深度上限 `forward_max_depth`；
-- 图片保存为 `training_data/forwarded/<batch_id>/images/<uuid>.<ext>`；
+- 所有训练图片平铺保存为 `training_data/forwarded/images/<uuid>.<ext>`；
 - 每批写 `metadata.jsonl`（发送者 QQ/昵称、群号/群名、节点发送者、时间、嵌套路径、SHA-256、尺寸）；
 - 写 `batch.json` 汇总和全局 `index.jsonl` 做跨批次 SHA 去重；
 - 图片标签为 `unlabeled`，不会自动进入 `collect`/`skip`；

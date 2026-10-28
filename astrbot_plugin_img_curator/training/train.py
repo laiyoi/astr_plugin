@@ -15,15 +15,23 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:  # tensorboard is optional at runtime
+    SummaryWriter = None
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dataset import (  # noqa: E402
     TasteDataset,
+    auto_split_records,
     class_counts,
     class_weights,
     dedupe_records,
+    discover_flat_records,
     discover_records,
     make_loader,
+    update_report_kept,
     write_dedupe_report,
 )
 from model import (  # noqa: E402
@@ -54,7 +62,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unfreeze-last-blocks", type=int, default=0)
     parser.add_argument("--full-finetune", action="store_true")
     parser.add_argument("--balanced-sampler", action="store_true")
+    parser.add_argument("--auto-split", action="store_true", help="split a flat collect/skip dataset")
+    parser.add_argument("--val-ratio", type=float, default=0.15)
+    parser.add_argument("--test-ratio", type=float, default=0.15)
+    parser.add_argument("--split-seed", type=int, default=42)
     parser.add_argument("--dedupe-threshold", type=int, default=6)
+    parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--tensorboard-dir", type=Path, default=None)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda")
@@ -95,8 +109,24 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Scanning {args.data_root} ...")
-    records = discover_records(args.data_root)
+    records = (
+        discover_flat_records(args.data_root)
+        if args.auto_split
+        else discover_records(args.data_root)
+    )
     records, report = dedupe_records(records, threshold=args.dedupe_threshold)
+    if args.auto_split:
+        records = auto_split_records(
+            records,
+            val_ratio=args.val_ratio,
+            test_ratio=args.test_ratio,
+            seed=args.split_seed,
+        )
+        update_report_kept(report, records)
+        print(
+            f"Auto split: train={1 - args.val_ratio - args.test_ratio:.0%} "
+            f"val={args.val_ratio:.0%} test={args.test_ratio:.0%} seed={args.split_seed}"
+        )
     write_dedupe_report(args.output_dir / "dedupe_report.json", report)
     print("Kept per split:", report.kept)
     print(f"Removed duplicates: {len(report.removed)} (see dedupe_report.json)")
@@ -155,6 +185,15 @@ def main() -> int:
         start_epoch = int(checkpoint.get("epoch", 0)) + 1
         print(f"Resumed weights from {args.resume}, starting at epoch {start_epoch}")
 
+    writer = None
+    tb_dir = args.tensorboard_dir or (args.output_dir / "tensorboard")
+    if args.tensorboard:
+        if SummaryWriter is None:
+            print("tensorboard is not installed; continuing without TensorBoard. pip install tensorboard")
+        else:
+            writer = SummaryWriter(log_dir=str(tb_dir))
+            print(f"TensorBoard: {tb_dir}")
+
     history: list[dict] = []
     best_val_loss = float("inf")
     best_f1 = -1.0
@@ -190,6 +229,15 @@ def main() -> int:
             **{f"val_{k}": v for k, v in val_metrics.items() if k not in {"threshold"}},
         }
         history.append(row)
+        if writer is not None:
+            writer.add_scalar("loss/train", train_loss, epoch)
+            writer.add_scalar("loss/val", val_loss, epoch)
+            for key in ("precision", "recall", "f1", "auc", "accuracy"):
+                if key in val_metrics:
+                    writer.add_scalar(f"val/{key}", val_metrics[key], epoch)
+            writer.add_scalar("lr", optimizer.param_groups[0]["lr"], epoch)
+            if len(optimizer.param_groups) > 1:
+                writer.add_scalar("lr_backbone", optimizer.param_groups[1]["lr"], epoch)
         print(
             f"epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f} "
             f"P={val_metrics['precision']:.4f} R={val_metrics['recall']:.4f} F1={val_metrics['f1']:.4f}"
@@ -223,6 +271,21 @@ def main() -> int:
                 print(f"Early stopping at epoch {epoch} (patience={args.patience})")
                 break
 
+    if writer is not None:
+        writer.add_hparams(
+            {
+                "lr_head": args.lr_head,
+                "lr_backbone": args.lr_backbone,
+                "batch_size": args.batch_size,
+                "image_size": args.image_size,
+                "unfreeze_last_blocks": args.unfreeze_last_blocks,
+                "auto_split": args.auto_split,
+            },
+            {"hparams/best_val_loss": best_val_loss, "hparams/best_f1": best_f1},
+        )
+        writer.flush()
+        writer.close()
+
     save_json(args.output_dir / "history.json", history)
     save_json(
         args.output_dir / "train_summary.json",
@@ -237,6 +300,7 @@ def main() -> int:
             "total_params": total,
             "amp": amp_enabled,
             "device": str(device),
+            "tensorboard_dir": str(tb_dir) if writer is not None else None,
         },
     )
     print(f"Done. best.pt and model_config.json -> {args.output_dir}")

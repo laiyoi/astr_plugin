@@ -278,7 +278,10 @@ class ForwardCollector:
     async def _process(self, job: ForwardJob) -> None:
         batch_id = str(uuid.uuid4())
         batch_dir = self.root / batch_id
-        images_dir = batch_dir / "images"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        # Keep all training images in one flat folder; only per-batch metadata
+        # stays under the batch UUID directory.
+        images_dir = self.root / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
         started_at = now_iso()
         metadata: list[dict[str, Any]] = []
@@ -318,6 +321,7 @@ class ForwardCollector:
                     handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             summary = {
                 "batch_id": batch_id,
+                "images_dir": str(images_dir),
                 "started_at": started_at,
                 "finished_at": now_iso(),
                 "elapsed_ms": round((time.time() - started_ts) * 1000),
