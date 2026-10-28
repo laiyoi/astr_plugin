@@ -26,7 +26,6 @@ All selected frames from one video stay in the same split.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import random
@@ -34,6 +33,7 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PLUGIN_ROOT = _SCRIPT_DIR.parent / "astrbot_plugin_img_curator"
@@ -57,18 +57,21 @@ class Item:
     split: str = "train"
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Preprocess skip/suspicious/collect media into train/val/test")
-    parser.add_argument("--raw-root", type=Path, default=_SCRIPT_DIR / "dataset_raw")
-    parser.add_argument("--output-root", type=Path, default=_SCRIPT_DIR / "dataset")
-    parser.add_argument("--val-ratio", type=float, default=0.15)
-    parser.add_argument("--test-ratio", type=float, default=0.15)
-    parser.add_argument("--split-seed", type=int, default=42)
-    parser.add_argument("--video-max-frames", type=int, default=8)
-    parser.add_argument("--video-max-seconds", type=int, default=15)
-    parser.add_argument("--video-fps", type=float, default=1.0)
-    parser.add_argument("--clean", action="store_true", help="delete output-root first")
-    return parser.parse_args()
+def load_config() -> SimpleNamespace:
+    config_path = _SCRIPT_DIR / "config.json"
+    if not config_path.is_file():
+        raise SystemExit(f"config not found: {config_path}")
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    section = dict(payload.get("preprocess") or {})
+    for key in ("raw_root", "output_root"):
+        if key in section:
+            section[key] = str(_resolve(section[key]))
+    return SimpleNamespace(**section)
+
+
+def _resolve(value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (_SCRIPT_DIR / path).resolve()
 
 
 def sha256_file(path: Path) -> str:
@@ -154,7 +157,7 @@ def preprocess_image(item: Item, output_root: Path) -> Path:
     return target
 
 
-def preprocess_video(item: Item, output_root: Path, args: argparse.Namespace) -> list[Path]:
+def preprocess_video(item: Item, output_root: Path, args: SimpleNamespace) -> list[Path]:
     target_dir = output_root / item.split / CLASS_NAMES[item.label]
     target_dir.mkdir(parents=True, exist_ok=True)
     work = output_root / ".work" / item.sha256[:20]
@@ -178,7 +181,7 @@ def preprocess_video(item: Item, output_root: Path, args: argparse.Namespace) ->
 
 
 def main() -> int:
-    args = parse_args()
+    args = load_config()
     if not args.raw_root.is_dir():
         raise SystemExit(f"raw root not found: {args.raw_root}")
     if args.clean and args.output_root.exists():

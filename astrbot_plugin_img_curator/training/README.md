@@ -73,16 +73,26 @@ astrbot_plugin_img_curator/training/
 
 视频必须先在预处理阶段抽帧，使用和检测完全相同的高变化/均匀覆盖算法；训练机需要安装 `ffmpeg` 并加入 PATH。
 
+参数全部在 `training/config.json` 的 `preprocess` 段，直接运行：
+
 ```powershell
-python training\preprocess.py `
-  --raw-root training\dataset_raw `
-  --output-root training\dataset `
-  --val-ratio 0.15 `
-  --test-ratio 0.15 `
-  --split-seed 42 `
-  --video-max-frames 8 `
-  --video-max-seconds 15 `
-  --video-fps 1.0
+python training\preprocess.py
+```
+
+默认：
+
+```json
+{
+  "raw_root": "dataset_raw",
+  "output_root": "dataset",
+  "val_ratio": 0.15,
+  "test_ratio": 0.15,
+  "split_seed": 42,
+  "video_max_frames": 8,
+  "video_max_seconds": 15,
+  "video_fps": 1.0,
+  "clean": false
+}
 ```
 
 处理规则：
@@ -92,7 +102,7 @@ python training\preprocess.py `
 - 同一视频的所有帧分到同一个 split，避免泄漏；
 - 按 `collect` / `suspicious` / `skip` 分层划分 train/val/test，默认 70/15/15；
 - 输出 `training/dataset/preprocess_report.json`；
-- `--clean` 会先删除整个输出目录，慎用。
+- `clean: true` 会先删除整个输出目录，慎用。
 
 处理完成后目录就是训练脚本需要的 `train/val/test/{collect,suspicious,skip}` 结构。
 
@@ -100,19 +110,27 @@ python training\preprocess.py `
 
 ## 4. 训练
 
+参数全部在 `training/config.json` 的 `train` 段，直接运行：
+
 ```powershell
-python training\train.py `
-  --data-root training\dataset `
-  --output-dir D:\runs\taste_dinov2_v1 `
-  --epochs 30 `
-  --batch-size 32 `
-  --image-size 224 `
-  --unfreeze-last-blocks 0 `
-  --amp `
-  --num-workers 4
+python training\train.py
 ```
 
-如果省略 `--data-root`，默认使用 `training/dataset`。
+默认：
+
+```json
+{
+  "data_root": "dataset",
+  "output_dir": "runs/taste_dinov2_v1",
+  "checkpoint_dir": "ckpt",
+  "save_every_epochs": 20
+}
+```
+
+- 不设置总 epoch 数，按验证集 early stopping 停止；
+- 每 `save_every_epochs` 个 epoch 自动保存 `ckpt/epoch_XXXX.pt`，默认 20；
+- 同时保存 `ckpt/last.pt` 和 `ckpt/best.pt`；
+- `checkpoint_dir` 相对 `output_dir`，也可以写绝对路径。
 
 TensorBoard 默认开启，日志写到：
 
@@ -126,7 +144,7 @@ TensorBoard 默认开启，日志写到：
 tensorboard --logdir D:\runs\taste_dinov2_v1\tensorboard
 ```
 
-不需要时加 `--no-tensorboard`，或指定目录 `--tensorboard-dir D:\runs\tb`。
+需要关闭时把配置里的 `tensorboard` 改为 `false`，或设置 `tensorboard_dir`。
 
 默认：
 
@@ -134,18 +152,21 @@ tensorboard --logdir D:\runs\taste_dinov2_v1\tensorboard
 - 冻结视觉主干，只训练 LayerNorm + Dropout + Linear 分类头；
 - 混合精度；
 - class weight 处理三分类不平衡；
-- 按验证 loss 保存 `best.pt`；
+- 按验证 loss 保存 `ckpt/best.pt`；
 - 输出 `model_config.json`（阈值先设为 0.5）。
 
 效果不足时再解冻最后几个 block：
 
-```powershell
-python training\train.py ... --unfreeze-last-blocks 2 --lr-backbone 1e-4
+效果不足时，在 `training/config.json` 里把：
+
+```json
+"unfreeze_last_blocks": 2,
+"lr_backbone": 0.0001
 ```
 
-12GB 显存下 `--batch-size 32` 通常够用；OOM 就降到 16。不要一开始 `--full-finetune`，小数据容易过拟合。
+12GB 显存下 `"batch_size": 32` 通常够用；OOM 就降到 16。不要一开始 `"full_finetune": true`，小数据容易过拟合。
 
-如果 Windows DataLoader 报错，把 `--num-workers` 改成 0 先跑通。
+如果 Windows DataLoader 报错，把 `"num_workers": 0` 先跑通。
 
 ---
 
@@ -174,7 +195,7 @@ count >= save_at_saved_count -> save
 
 ```powershell
 python training\calibrate_threshold.py `
-  --checkpoint D:\runs\taste_dinov2_v1\best.pt `
+  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
   --data-root training\dataset `
   --config D:\runs\taste_dinov2_v1\model_config.json `
   --target-precision 0.95 `
@@ -191,7 +212,7 @@ python training\calibrate_threshold.py `
 
 ```powershell
 python training\evaluate.py `
-  --checkpoint D:\runs\taste_dinov2_v1\best.pt `
+  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
   --data-root training\dataset `
   --config D:\runs\taste_dinov2_v1\model_config.json `
   --split test `
@@ -210,7 +231,7 @@ python training\evaluate.py `
 
 ```powershell
 python training\export_onnx.py `
-  --checkpoint D:\runs\taste_dinov2_v1\best.pt `
+  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
   --config D:\runs\taste_dinov2_v1\model_config.json `
   --output-dir D:\runs\taste_dinov2_v1\deploy `
   --opset 17 `
@@ -233,7 +254,7 @@ deploy\
 
 ```powershell
 python training\test_onnx.py `
-  --checkpoint D:\runs\taste_dinov2_v1\best.pt `
+  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
   --onnx D:\runs\taste_dinov2_v1\deploy\taste_classifier.onnx `
   --config D:\runs\taste_dinov2_v1\deploy\model_config.json `
   --data-root training\dataset `

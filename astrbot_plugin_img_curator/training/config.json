@@ -1,0 +1,40 @@
+{
+  "preprocess": {
+    "raw_root": "dataset_raw",
+    "output_root": "dataset",
+    "val_ratio": 0.15,
+    "test_ratio": 0.15,
+    "split_seed": 42,
+    "video_max_frames": 8,
+    "video_max_seconds": 15,
+    "video_fps": 1.0,
+    "clean": false
+  },
+  "train": {
+    "data_root": "dataset",
+    "output_dir": "runs/taste_dinov2_v1",
+    "checkpoint_dir": "ckpt",
+    "save_every_epochs": 20,
+    "patience": 6,
+    "backbone": "vit_small_patch14_dinov2.lvd142m",
+    "image_size": 224,
+    "batch_size": 32,
+    "lr_head": 0.001,
+    "lr_backbone": 0.0001,
+    "weight_decay": 0.05,
+    "dropout": 0.2,
+    "unfreeze_last_blocks": 0,
+    "full_finetune": false,
+    "balanced_sampler": false,
+    "dedupe_threshold": 6,
+    "tensorboard": true,
+    "tensorboard_dir": null,
+    "num_workers": 4,
+    "seed": 42,
+    "device": "cuda",
+    "amp": true,
+    "pretrained": true,
+    "resume": null,
+    "version": "1.0.0"
+  }
+}
