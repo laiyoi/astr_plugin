@@ -16,12 +16,12 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dataset import TasteDataset, dedupe_records, discover_records, make_loader  # noqa: E402
-from model import eval_transform, load_model_from_checkpoint  # noqa: E402
+from model import POSITIVE_INDEX, eval_transform, load_model_from_checkpoint  # noqa: E402
 from utils import binary_metrics, load_json, resolve_device, save_json  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate DINOv2 collect/skip classifier")
+    parser = argparse.ArgumentParser(description="Evaluate DINOv2 skip/suspicious/collect classifier")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--split", choices=["val", "test"], default="test")
@@ -60,17 +60,22 @@ def main() -> int:
         for images, targets, batch_paths in loader:
             images = images.to(device, non_blocking=True)
             logits = model(images)
-            probs = torch.softmax(logits.float(), dim=1)[:, 1]
+            probs = torch.softmax(logits.float(), dim=1)[:, POSITIVE_INDEX]
             labels.extend(int(x) for x in targets.tolist())
             scores.extend(float(x) for x in probs.cpu().tolist())
             paths.extend(batch_paths)
 
-    metrics = binary_metrics(labels, scores, threshold)
+    collect_labels = [1 if label == POSITIVE_INDEX else 0 for label in labels]
+    metrics = binary_metrics(collect_labels, scores, threshold)
     false_positives = [
-        {"path": p, "score": s} for p, y, s in zip(paths, labels, scores) if y == 0 and s >= threshold
+        {"path": p, "score": s}
+        for p, y, s in zip(paths, collect_labels, scores)
+        if y == 0 and s >= threshold
     ]
     false_negatives = [
-        {"path": p, "score": s} for p, y, s in zip(paths, labels, scores) if y == 1 and s < threshold
+        {"path": p, "score": s}
+        for p, y, s in zip(paths, collect_labels, scores)
+        if y == 1 and s < threshold
     ]
     output = {
         "split": args.split,
@@ -99,7 +104,7 @@ def main() -> int:
             writer.writerow(
                 {
                     "path": path,
-                    "label": "collect" if label == 1 else "skip",
+                    "label": checkpoint.get("class_names", ["skip", "suspicious", "collect"])[label] if label < len(checkpoint.get("class_names", [])) else str(label),
                     "score": f"{score:.8f}",
                     "prediction": "collect" if score >= threshold else "skip",
                 }

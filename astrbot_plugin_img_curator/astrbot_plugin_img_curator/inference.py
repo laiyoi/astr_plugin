@@ -42,8 +42,10 @@ class TasteClassifier:
         self.class_names = list(self.config["class_names"])
         self.positive_index = int(self.config.get("positive_class_index", 1))
         self.threshold = float(self.config.get("threshold", 0.5))
-        if len(self.class_names) != 2:
-            raise ValueError("expected exactly two class_names")
+        if len(self.class_names) not in (2, 3):
+            raise ValueError("expected 2 or 3 class_names")
+        if self.class_names[self.positive_index] != "collect":
+            raise ValueError("positive_class_index must point to collect")
         if self.mean.shape != (3,) or self.std.shape != (3,):
             raise ValueError("mean/std must have 3 values")
 
@@ -83,12 +85,15 @@ class TasteClassifier:
         shifted = logits - np.max(logits)
         exp = np.exp(shifted)
         probs = exp / np.sum(exp)
-        score = float(probs[self.positive_index])
-        label = self.class_names[self.positive_index] if score >= self.threshold else self.class_names[1 - self.positive_index]
+        positive_score = float(probs[self.positive_index])
+        predicted_index = int(np.argmax(probs))
+        label = self.class_names[predicted_index]
         return {
             "label": label,
-            "collect": bool(score >= self.threshold),
-            "score": score,
+            "collect": label == "collect",
+            "score": positive_score,
+            "collect_score": positive_score,
+            "suspicious_score": float(probs[self.class_names.index("suspicious")]) if "suspicious" in self.class_names else 0.0,
             "threshold": self.threshold,
             "class_scores": {name: float(probs[i]) for i, name in enumerate(self.class_names)},
             "logits": [float(x) for x in logits],
@@ -100,19 +105,53 @@ class TasteClassifier:
             return self.predict(image)
 
 
+def decide_save(label: str, publisher_saved_count: int, policy: dict[str, Any] | None = None) -> str:
+    """Return save/cache/skip using publisher history, never the model.
+
+    suspicious:
+      count < cache_below_saved_count -> cache
+      count >= save_at_saved_count   -> save
+      otherwise                      -> skip
+    collect -> save, skip -> skip.
+    """
+    if label == "collect":
+        return "save"
+    if label == "skip":
+        return "skip"
+    policy = policy or {}
+    save_at = int(policy.get("save_at_saved_count", 5))
+    cache_below = int(policy.get("cache_below_saved_count", 3))
+    if publisher_saved_count < cache_below:
+        return "cache"
+    if publisher_saved_count >= save_at:
+        return "save"
+    return "skip"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="CPU ONNX inference for the DINOv2 taste classifier")
     parser.add_argument("--onnx", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--publisher-saved-count", type=int, default=0)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     classifier = TasteClassifier(args.onnx, args.config)
     result = classifier.predict_path(args.image)
+    decision = decide_save(
+        str(result["label"]),
+        args.publisher_saved_count,
+        classifier.config.get("suspicious_policy"),
+    )
+    result["publisher_saved_count"] = args.publisher_saved_count
+    result["decision"] = decision
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        print(f"label={result['label']} collect={result['collect']} score={result['score']:.4f} threshold={result['threshold']:.4f}")
+        print(
+            f"label={result['label']} decision={result['decision']} "
+            f"collect={result['collect']} score={result['score']:.4f} threshold={result['threshold']:.4f}"
+        )
     return 0
 
 

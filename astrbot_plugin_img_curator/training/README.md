@@ -37,61 +37,73 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 
 ## 2. 数据来源与目录
 
-可以用插件的合并记录采集作为原始来源：在群里发送 `/imgfilter forward 10`，再发合并聊天记录；**所有图片（含 GIF/BMP，原文件不抽帧）会平铺保存到 `training_data/forwarded/images/`，视频保存到 `training_data/forwarded/videos/`**；每批的 `metadata.jsonl` 仍放在 `training_data/forwarded/<batch_id>/`。之后按 `collect` / `skip` 分好类即可。
-
-必须人工标注成 `collect` / `skip` 两类。现在支持两种目录：
-
-**A. 已手动分好 train/val/test**
+插件的合并记录采集会输出：
 
 ```text
-D:\data\taste\
-  train\
-    collect\   # 愿意收藏
-    skip\      # 不收藏
-  val\
-    collect\
-    skip\
-  test\
-    collect\
-    skip\
+training_data/forwarded/images/*.jpg|png|webp|gif
+training_data/forwarded/videos/*.mp4
+training_data/forwarded/<batch_id>/metadata.jsonl
 ```
 
-**B. 只分 collect/skip，训练时自动划分**
+把它们按标签放进原始目录：
 
 ```text
-D:\data\taste\
-  collect\
-  skip\
+astrbot_plugin_img_curator/training/
+  dataset_raw/
+    collect/       # 愿意收藏：图片、GIF、视频
+    suspicious/    # 可疑，交给发布者历史判定
+    skip/          # 不收藏：图片、GIF、视频
+  dataset/         # preprocess.py 生成，不要手改
+    train/collect/
+    train/suspicious/
+    train/skip/
+    val/collect/
+    val/suspicious/
+    val/skip/
+    test/collect/
+    test/suspicious/
+    test/skip/
 ```
 
-自动划分是分层抽样，按类别分别切分，默认：
-
-```text
-train 70% / val 15% / test 15%
-```
-
-并先做去重再划分，避免同一张图跨 split。
-
-要求：
-
-- `collect` 为正类，`skip` 为负类；
-- 测试集不参与训练、早停、阈值选择；
-- 视频帧要按视频分组，同一视频的帧不要跨 split；
-- 同一人物/同一组连拍尽量放在同一侧；
-- 脚本会做 SHA-256 精确去重 + dHash 近似去重（默认汉明距离 ≤6），并写 `dedupe_report.json`；
-- 自动划分模式会先对全部数据去重，再按类别分层切分；
-- 手动划分模式跨 split 重复时优先保留 train，删除 val/test 的重复项；
-- **测试集被去重删除的图会记录在报告里，但不会用于调参。**
+空目录带 `.gitkeep`，可以直接保留。`dataset_raw` 是人工放素材的地方，`dataset` 是预处理产物。
 
 ---
 
-## 3. 训练
+## 3. 预处理
+
+视频必须先在预处理阶段抽帧，使用和检测完全相同的高变化/均匀覆盖算法；训练机需要安装 `ffmpeg` 并加入 PATH。
+
+```powershell
+python training\preprocess.py `
+  --raw-root training\dataset_raw `
+  --output-root training\dataset `
+  --val-ratio 0.15 `
+  --test-ratio 0.15 `
+  --split-seed 42 `
+  --video-max-frames 8 `
+  --video-max-seconds 15 `
+  --video-fps 1.0
+```
+
+处理规则：
+
+- 图片/GIF：原文件按内容哈希复制，不抽帧、不转码；
+- 视频：`core.video.extract_frames()` 抽帧，帧保存为 JPEG；
+- 同一视频的所有帧分到同一个 split，避免泄漏；
+- 按 `collect` / `suspicious` / `skip` 分层划分 train/val/test，默认 70/15/15；
+- 输出 `training/dataset/preprocess_report.json`；
+- `--clean` 会先删除整个输出目录，慎用。
+
+处理完成后目录就是训练脚本需要的 `train/val/test/{collect,suspicious,skip}` 结构。
+
+---
+
+## 4. 训练
 
 ```powershell
 python training\train.py `
-  --data-root D:\data\taste `
+  --data-root training\dataset `
   --output-dir D:\runs\taste_dinov2_v1 `
-  --auto-split `
   --epochs 30 `
   --batch-size 32 `
   --image-size 224 `
@@ -100,11 +112,7 @@ python training\train.py `
   --num-workers 4
 ```
 
-如果目录已经是 `train/val/test`，去掉 `--auto-split` 即可。自动划分的比例可调：
-
-```powershell
---val-ratio 0.15 --test-ratio 0.15 --split-seed 42
-```
+如果省略 `--data-root`，默认使用 `training/dataset`。
 
 TensorBoard 默认开启，日志写到：
 
@@ -122,10 +130,10 @@ tensorboard --logdir D:\runs\taste_dinov2_v1\tensorboard
 
 默认：
 
-- DINOv2 ViT-S/14，ImageNet 预训练；
+- DINOv2 ViT-S/14，ImageNet 预训练，三分类 `skip / suspicious / collect`；
 - 冻结视觉主干，只训练 LayerNorm + Dropout + Linear 分类头；
 - 混合精度；
-- class weight 处理 collect/skip 不平衡；
+- class weight 处理三分类不平衡；
 - 按验证 loss 保存 `best.pt`；
 - 输出 `model_config.json`（阈值先设为 0.5）。
 
@@ -141,12 +149,33 @@ python training\train.py ... --unfreeze-last-blocks 2 --lr-backbone 1e-4
 
 ---
 
-## 4. 在验证集校准阈值（优先降低误收藏）
+## 4.1 suspicious 的保存策略
+
+模型只负责三分类，`suspicious` 不直接保存。发布者的“男娘置信度”用该发布者已经保存的图片数量近似：
+
+```text
+publisher_saved_count < cache_below_saved_count  -> cache
+cache_below_saved_count <= count < save_at_saved_count -> skip
+count >= save_at_saved_count -> save
+```
+
+默认在 `model_config.json`：
+
+```json
+"suspicious_policy": {
+  "save_at_saved_count": 5,
+  "cache_below_saved_count": 3
+}
+```
+
+`inference.py` 提供 `decide_save(label, publisher_saved_count, policy)`；模型本身不计算这个数量。插件侧可以用 `Store.count_saved_by_sender(sender_id)` 取这个计数。
+
+## 5. 在验证集校准阈值（优先降低误收藏）
 
 ```powershell
 python training\calibrate_threshold.py `
   --checkpoint D:\runs\taste_dinov2_v1\best.pt `
-  --data-root D:\data\taste `
+  --data-root training\dataset `
   --config D:\runs\taste_dinov2_v1\model_config.json `
   --target-precision 0.95 `
   --update-config
@@ -158,12 +187,12 @@ python training\calibrate_threshold.py `
 
 ---
 
-## 5. 评估（只在 test 上报告）
+## 6. 评估（只在 test 上报告）
 
 ```powershell
 python training\evaluate.py `
   --checkpoint D:\runs\taste_dinov2_v1\best.pt `
-  --data-root D:\data\taste `
+  --data-root training\dataset `
   --config D:\runs\taste_dinov2_v1\model_config.json `
   --split test `
   --device cuda
@@ -177,7 +206,7 @@ python training\evaluate.py `
 
 ---
 
-## 6. 导出 ONNX
+## 7. 导出 ONNX
 
 ```powershell
 python training\export_onnx.py `
@@ -200,14 +229,14 @@ deploy\
 
 ---
 
-## 7. Windows 上验证 PyTorch / ONNX 一致性
+## 8. Windows 上验证 PyTorch / ONNX 一致性
 
 ```powershell
 python training\test_onnx.py `
   --checkpoint D:\runs\taste_dinov2_v1\best.pt `
   --onnx D:\runs\taste_dinov2_v1\deploy\taste_classifier.onnx `
   --config D:\runs\taste_dinov2_v1\deploy\model_config.json `
-  --data-root D:\data\taste `
+  --data-root training\dataset `
   --device cuda
 ```
 
@@ -219,7 +248,7 @@ python training\test_onnx.py `
 
 ---
 
-## 8. 复制到 Ubuntu 的文件
+## 9. 复制到 Ubuntu 的文件
 
 只需要：
 
@@ -248,7 +277,7 @@ requirements-deploy.txt
 
 ---
 
-## 9. Ubuntu / N100 CPU 测试
+## 10. Ubuntu / N100 CPU 测试
 
 Ubuntu 上不安装 PyTorch。建议单独 venv：
 
@@ -273,7 +302,7 @@ python inference.py \
   "collect": true,
   "score": 0.93,
   "threshold": 0.91,
-  "class_scores": {"skip": 0.07, "collect": 0.93},
+  "class_scores": {"skip": 0.07, "suspicious": 0.02, "collect": 0.91},
   "version": "1.0.0"
 }
 ```
@@ -296,7 +325,7 @@ if result["collect"]:
 
 ---
 
-## 10. 预处理一致性
+## 11. 预处理一致性
 
 训练、评估、导出、Ubuntu 推理必须完全一致：
 
@@ -314,7 +343,7 @@ RGB
 
 ---
 
-## 11. 性能与验收
+## 12. 性能与验收
 
 - 先看 `test_onnx.py` 的 parity，再看 `evaluate.py` 的 precision/recall；
 - 在 Ubuntu 上用 `time` 或插件日志实测单张 CPU 延迟；

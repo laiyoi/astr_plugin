@@ -38,7 +38,7 @@ def collect_images(args) -> list[Path]:
         raise ValueError("provide --image or --data-root")
     images: list[Path] = []
     for split in ("test", "val", "train"):
-        for class_name in ("collect", "skip"):
+        for class_name in ("collect", "suspicious", "skip"):
             directory = args.data_root / split / class_name
             if not directory.is_dir():
                 continue

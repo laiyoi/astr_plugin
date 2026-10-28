@@ -17,7 +17,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dataset import TasteDataset, dedupe_records, discover_records, make_loader  # noqa: E402
-from model import eval_transform, load_model_from_checkpoint  # noqa: E402
+from model import POSITIVE_INDEX, eval_transform, load_model_from_checkpoint  # noqa: E402
 from utils import binary_metrics, load_json, resolve_device, save_json  # noqa: E402
 
 
@@ -51,16 +51,17 @@ def main() -> int:
         for images, targets, _ in loader:
             images = images.to(device, non_blocking=True)
             logits = model(images)
-            probs = torch.softmax(logits.float(), dim=1)[:, 1]
+            probs = torch.softmax(logits.float(), dim=1)[:, POSITIVE_INDEX]
             labels.extend(int(x) for x in targets.tolist())
             scores.extend(float(x) for x in probs.cpu().tolist())
 
+    collect_labels = [1 if label == POSITIVE_INDEX else 0 for label in labels]
     unique_scores = sorted(set(scores))
     candidates = [0.0] + unique_scores + [1.0]
     best = None
     fallback = None
     for threshold in candidates:
-        metrics = binary_metrics(labels, scores, threshold)
+        metrics = binary_metrics(collect_labels, scores, threshold)
         if fallback is None or (metrics["precision"], metrics["recall"]) > (
             fallback["precision"],
             fallback["recall"],

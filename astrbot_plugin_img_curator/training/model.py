@@ -1,4 +1,4 @@
-"""DINOv2 ViT-S/14 binary taste classifier.
+"""DINOv2 ViT-S/14 three-class taste classifier.
 
 ImageNet normalization is used by the official DINOv2 checkpoints.  The
 preprocessing here must stay byte-for-byte identical to inference.py.
@@ -16,8 +16,8 @@ import torch.nn as nn
 from torchvision import transforms
 
 BACKBONE_NAME = "vit_small_patch14_dinov2.lvd142m"
-CLASS_NAMES = ("skip", "collect")
-POSITIVE_INDEX = 1
+CLASS_NAMES = ("skip", "suspicious", "collect")
+POSITIVE_INDEX = 2
 IMAGE_SIZE = 224
 RESIZE_SIZE = 256
 MEAN = (0.485, 0.456, 0.406)
@@ -35,7 +35,7 @@ class DinoTasteModel(nn.Module):
         backbone_name: str = BACKBONE_NAME,
         *,
         pretrained: bool = True,
-        num_classes: int = 2,
+        num_classes: int = len(CLASS_NAMES),
         dropout: float = 0.2,
         img_size: int = IMAGE_SIZE,
     ) -> None:
@@ -63,7 +63,7 @@ class DinoTasteModel(nn.Module):
 
 
 class ExportWrapper(nn.Module):
-    """ONNX wrapper: fixed NCHW input -> logits [N, 2]."""
+    """ONNX wrapper: fixed NCHW input -> logits [N, 3]."""
 
     def __init__(self, model: DinoTasteModel) -> None:
         super().__init__()
@@ -77,7 +77,7 @@ def build_model(
     *,
     backbone_name: str = BACKBONE_NAME,
     pretrained: bool = True,
-    num_classes: int = 2,
+    num_classes: int = len(CLASS_NAMES),
     dropout: float = 0.2,
     img_size: int = IMAGE_SIZE,
 ) -> DinoTasteModel:
@@ -189,9 +189,13 @@ def write_model_config(
         "resize_size": RESIZE_SIZE,
         "mean": list(MEAN),
         "std": list(STD),
-        "class_names": list(CLASS_NAMES),
-        "positive_class_index": POSITIVE_INDEX,
+        "class_names": list(checkpoint.get("class_names") or CLASS_NAMES),
+        "positive_class_index": list(checkpoint.get("class_names") or CLASS_NAMES).index("collect"),
         "threshold": float(threshold),
+        "suspicious_policy": {
+            "save_at_saved_count": 5,
+            "cache_below_saved_count": 3,
+        },
         "preprocess": PREPROCESS_DESCRIPTION,
         "onnx": {
             "input_name": "input",

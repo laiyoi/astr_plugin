@@ -1,4 +1,4 @@
-"""Export the DINOv2 backbone + binary head to a fixed-shape ONNX model."""
+"""Export the DINOv2 backbone + three-class head to a fixed-shape ONNX model."""
 
 from __future__ import annotations
 

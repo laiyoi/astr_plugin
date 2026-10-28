@@ -1,10 +1,8 @@
-"""Dataset scanning, exact+near duplicate removal, and torch Datasets.
+"""Dataset scanning, exact/near-duplicate removal, and torch Datasets.
 
-Two supported layouts:
+Run training/preprocess.py first. The trainer consumes this layout only:
 
-1. Already split:
-
-    data_root/
+    dataset/
       train/collect/*.jpg
       train/skip/*.jpg
       val/collect/*.jpg
@@ -12,20 +10,13 @@ Two supported layouts:
       test/collect/*.jpg
       test/skip/*.jpg
 
-2. Flat, auto-split by the training script:
-
-    data_root/
-      collect/*.jpg
-      skip/*.jpg
-
-`collect` is positive (label 1), `skip` is negative (label 0).
+Labels: `skip=0`, `suspicious=1`, `collect=2`.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -36,9 +27,9 @@ from PIL import Image, ImageOps
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms
 
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
-CLASS_TO_INDEX = {"skip": 0, "collect": 1}
-INDEX_TO_CLASS = {0: "skip", 1: "collect"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+CLASS_TO_INDEX = {"skip": 0, "suspicious": 1, "collect": 2}
+INDEX_TO_CLASS = {0: "skip", 1: "suspicious", 2: "collect"}
 SPLITS = ("train", "val", "test")
 
 
@@ -91,101 +82,22 @@ def discover_records(data_root: Path) -> list[Record]:
             if not directory.is_dir():
                 raise FileNotFoundError(f"missing directory: {directory}")
             for path in sorted(directory.rglob("*")):
-                if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
-                    continue
-                records.append(Record(path=path, label=label, split=split))
+                if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+                    records.append(Record(path=path, label=label, split=split))
     if not records:
         raise ValueError("no images found")
     for record in records:
         record.sha256 = sha256_file(record.path)
         record.dhash = dhash(record.path)
     return records
-
-
-def discover_flat_records(data_root: Path) -> list[Record]:
-    """Discover a flat collect/skip dataset and assign no real split yet."""
-    records: list[Record] = []
-    for class_name, label in CLASS_TO_INDEX.items():
-        directory = data_root / class_name
-        if not directory.is_dir():
-            raise FileNotFoundError(
-                f"missing directory: {directory} (use train/val/test layout or --auto-split)"
-            )
-        for path in sorted(directory.rglob("*")):
-            if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
-                records.append(Record(path=path, label=label, split="train"))
-    if not records:
-        raise ValueError("no images found")
-    for record in records:
-        record.sha256 = sha256_file(record.path)
-        record.dhash = dhash(record.path)
-    return records
-
-
-def auto_split_records(
-    records: list[Record],
-    *,
-    val_ratio: float = 0.15,
-    test_ratio: float = 0.15,
-    seed: int = 42,
-) -> list[Record]:
-    """Stratified train/val/test split for a flattened, already-deduped set."""
-    if not 0 <= val_ratio < 1 or not 0 <= test_ratio < 1:
-        raise ValueError("val/test ratios must be in [0, 1)")
-    if val_ratio + test_ratio >= 1:
-        raise ValueError("val_ratio + test_ratio must be < 1")
-
-    rng = random.Random(seed)
-    for label in (0, 1):
-        group = [r for r in records if r.label == label and not r.removed]
-        if len(group) < 3:
-            raise ValueError(
-                f"class {INDEX_TO_CLASS[label]} needs at least 3 images for train/val/test"
-            )
-        rng.shuffle(group)
-        n = len(group)
-        n_val = max(1, round(n * val_ratio))
-        n_test = max(1, round(n * test_ratio))
-        while n_val + n_test >= n:
-            if n_val >= n_test and n_val > 1:
-                n_val -= 1
-            elif n_test > 1:
-                n_test -= 1
-            else:
-                break
-        for index, record in enumerate(group):
-            if index < n_val:
-                record.split = "val"
-            elif index < n_val + n_test:
-                record.split = "test"
-            else:
-                record.split = "train"
-    return records
-
-
-def update_report_kept(report: DedupeReport, records: Iterable[Record]) -> None:
-    final = [r for r in records if not r.removed]
-    report.kept = {
-        split: {
-            "total": len([r for r in final if r.split == split]),
-            "collect": len([r for r in final if r.split == split and r.label == 1]),
-            "skip": len([r for r in final if r.split == split and r.label == 0]),
-        }
-        for split in SPLITS
-    }
 
 
 def dedupe_records(records: Iterable[Record], threshold: int = 6) -> tuple[list[Record], DedupeReport]:
-    """Remove exact/near duplicates, never removing a train image for a val/test one.
-
-    Within a split the first path wins.  Across splits, train beats val, val
-    beats test; the lower-priority record is removed and recorded.
-    """
+    """Remove exact/near duplicates, never removing a train image for a val/test one."""
     records = list(records)
     report = DedupeReport()
     kept: list[Record] = []
 
-    # 1) Within-split duplicates.
     for split in SPLITS:
         split_records = [r for r in records if r.split == split]
         split_kept: list[Record] = []
@@ -203,22 +115,20 @@ def dedupe_records(records: Iterable[Record], threshold: int = 6) -> tuple[list[
                 report.removed.append({"path": str(record.path), "split": split, "reason": record.reason})
         kept.extend(split_kept)
 
-    # 2) Cross-split duplicates: drop the lower-priority side.
     priority = {"train": 0, "val": 1, "test": 2}
     result: list[Record] = []
     for record in kept:
         victim = None
+        keeper = None
         for other in result:
             if other.split == record.split:
                 continue
             if record.sha256 != other.sha256 and hamming(record.dhash, other.dhash) > threshold:
                 continue
             if priority[record.split] >= priority[other.split]:
-                victim = record
-                keeper = other
+                victim, keeper = record, other
             else:
-                victim = other
-                keeper = record
+                victim, keeper = other, record
             break
         if victim is None:
             result.append(record)
@@ -266,17 +176,24 @@ class TasteDataset(Dataset):
         return tensor, record.label, str(record.path)
 
 
-def class_counts(records: list[Record], split: str) -> tuple[int, int]:
+def class_counts(records: list[Record], split: str) -> dict[str, int]:
     subset = [r for r in records if r.split == split and not r.removed]
-    return sum(1 for r in subset if r.label == 0), sum(1 for r in subset if r.label == 1)
+    return {
+        name: sum(1 for r in subset if r.label == index)
+        for name, index in CLASS_TO_INDEX.items()
+    }
 
 
 def class_weights(records: list[Record], split: str = "train") -> torch.Tensor:
-    negative, positive = class_counts(records, split)
-    if negative == 0 or positive == 0:
-        raise ValueError(f"split {split} needs both classes, got skip={negative}, collect={positive}")
-    total = negative + positive
-    return torch.tensor([total / (2 * negative), total / (2 * positive)], dtype=torch.float32)
+    counts = class_counts(records, split)
+    missing = [name for name, count in counts.items() if count == 0]
+    if missing:
+        raise ValueError(f"split {split} is missing classes: {missing}")
+    total = sum(counts.values())
+    return torch.tensor(
+        [total / (len(counts) * counts[name]) for name in CLASS_TO_INDEX],
+        dtype=torch.float32,
+    )
 
 
 def make_loader(
@@ -294,7 +211,12 @@ def make_loader(
         counts = np.bincount(labels, minlength=2)
         sample_weights = [1.0 / counts[label] for label in labels]
         generator = torch.Generator().manual_seed(seed)
-        sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True, generator=generator)
+        sampler = WeightedRandomSampler(
+            sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True,
+            generator=generator,
+        )
         shuffle = False
     return DataLoader(
         dataset,

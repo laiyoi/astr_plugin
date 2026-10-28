@@ -1,7 +1,7 @@
-r"""Train DINOv2 ViT-S/14 for collect/skip classification on Windows + CUDA.
+r"""Train DINOv2 ViT-S/14 for skip/suspicious/collect classification on Windows + CUDA.
 
 Example:
-  python training/train.py --data-root D:\data\taste --output-dir D:\runs\taste_v1 ^
+  python training/train.py --data-root training/dataset --output-dir D:\runs\taste_v1 ^
       --epochs 30 --batch-size 32 --unfreeze-last-blocks 0
 """
 
@@ -24,20 +24,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dataset import (  # noqa: E402
     TasteDataset,
-    auto_split_records,
     class_counts,
     class_weights,
     dedupe_records,
-    discover_flat_records,
     discover_records,
     make_loader,
-    update_report_kept,
     write_dedupe_report,
 )
 from model import (  # noqa: E402
     BACKBONE_NAME,
     CLASS_NAMES,
     IMAGE_SIZE,
+    POSITIVE_INDEX,
     build_model,
     eval_transform,
     set_trainable,
@@ -48,8 +46,10 @@ from utils import binary_metrics, resolve_device, save_json, seed_everything  # 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="DINOv2 collect/skip fine-tuning")
-    parser.add_argument("--data-root", type=Path, required=True)
+    parser = argparse.ArgumentParser(description="DINOv2 skip/suspicious/collect fine-tuning")
+    parser.add_argument(
+        "--data-root", type=Path, default=Path(__file__).resolve().parent / "dataset"
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--backbone", default=BACKBONE_NAME)
     parser.add_argument("--image-size", type=int, default=IMAGE_SIZE)
@@ -62,10 +62,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unfreeze-last-blocks", type=int, default=0)
     parser.add_argument("--full-finetune", action="store_true")
     parser.add_argument("--balanced-sampler", action="store_true")
-    parser.add_argument("--auto-split", action="store_true", help="split a flat collect/skip dataset")
-    parser.add_argument("--val-ratio", type=float, default=0.15)
-    parser.add_argument("--test-ratio", type=float, default=0.15)
-    parser.add_argument("--split-seed", type=int, default=42)
     parser.add_argument("--dedupe-threshold", type=int, default=6)
     parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--tensorboard-dir", type=Path, default=None)
@@ -93,7 +89,7 @@ def evaluate_loss(model, loader, criterion, device, amp_enabled: bool) -> tuple[
                 logits = model(images)
                 loss = criterion(logits, targets)
             losses.append(float(loss.detach().cpu()))
-            probs = torch.softmax(logits.float(), dim=1)[:, 1]
+            probs = torch.softmax(logits.float(), dim=1)[:, POSITIVE_INDEX]
             labels.extend(int(x) for x in targets.cpu().tolist())
             scores.extend(float(x) for x in probs.cpu().tolist())
     mean_loss = sum(losses) / max(len(losses), 1)
@@ -109,24 +105,8 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Scanning {args.data_root} ...")
-    records = (
-        discover_flat_records(args.data_root)
-        if args.auto_split
-        else discover_records(args.data_root)
-    )
+    records = discover_records(args.data_root)
     records, report = dedupe_records(records, threshold=args.dedupe_threshold)
-    if args.auto_split:
-        records = auto_split_records(
-            records,
-            val_ratio=args.val_ratio,
-            test_ratio=args.test_ratio,
-            seed=args.split_seed,
-        )
-        update_report_kept(report, records)
-        print(
-            f"Auto split: train={1 - args.val_ratio - args.test_ratio:.0%} "
-            f"val={args.val_ratio:.0%} test={args.test_ratio:.0%} seed={args.split_seed}"
-        )
     write_dedupe_report(args.output_dir / "dedupe_report.json", report)
     print("Kept per split:", report.kept)
     print(f"Removed duplicates: {len(report.removed)} (see dedupe_report.json)")
@@ -134,7 +114,7 @@ def main() -> int:
     train_counts = class_counts(records, "train")
     val_counts = class_counts(records, "val")
     test_counts = class_counts(records, "test")
-    print(f"train skip/collect={train_counts}, val={val_counts}, test={test_counts}")
+    print(f"train={train_counts}, val={val_counts}, test={test_counts}")
 
     train_ds = TasteDataset(records, "train", train_transform(args.image_size))
     val_ds = TasteDataset(records, "val", eval_transform(args.image_size))
@@ -156,7 +136,7 @@ def main() -> int:
     model = build_model(
         backbone_name=args.backbone,
         pretrained=args.pretrained,
-        num_classes=2,
+        num_classes=len(CLASS_NAMES),
         dropout=args.dropout,
         img_size=args.image_size,
     ).to(device)
@@ -220,7 +200,11 @@ def main() -> int:
 
         scheduler.step()
         val_loss, val_labels, val_scores = evaluate_loss(model, val_loader, criterion, device, amp_enabled)
-        val_metrics = binary_metrics(val_labels, val_scores, 0.5)
+        val_metrics = binary_metrics(
+            [1 if label == POSITIVE_INDEX else 0 for label in val_labels],
+            val_scores,
+            0.5,
+        )
         train_loss = running / max(seen, 1)
         row = {
             "epoch": epoch,
@@ -279,7 +263,6 @@ def main() -> int:
                 "batch_size": args.batch_size,
                 "image_size": args.image_size,
                 "unfreeze_last_blocks": args.unfreeze_last_blocks,
-                "auto_split": args.auto_split,
             },
             {"hparams/best_val_loss": best_val_loss, "hparams/best_f1": best_f1},
         )

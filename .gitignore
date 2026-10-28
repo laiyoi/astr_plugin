@@ -1,4 +1,4 @@
-dataset/
+/dataset/
 uv*
 .vscode/
 *pycache*
@@ -8,3 +8,17 @@ astrbot_plugin_img_curator/benchmark_results/
 Astrbot
 
 AstrBot/
+
+# Training datasets: keep empty folder markers, ignore actual data/output
+/astrbot_plugin_img_curator/training/dataset_raw/**/*
+!/astrbot_plugin_img_curator/training/dataset_raw/**/
+!/astrbot_plugin_img_curator/training/dataset_raw/**/.gitkeep
+/astrbot_plugin_img_curator/training/dataset/**/*
+!/astrbot_plugin_img_curator/training/dataset/**/
+!/astrbot_plugin_img_curator/training/dataset/**/.gitkeep
+
+# Local debug artifacts under the project folder
+/astrbot_plugin_img_curator/data/
+/astrbot_plugin_img_curator/dataset/
+/astrbot_plugin_img_curator/benchmark_results/
+/astrbot_plugin_img_curator/benchmark/results/

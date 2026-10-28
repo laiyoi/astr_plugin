@@ -349,6 +349,15 @@ class Store:
                 writer.writerow(data)
         os.replace(tmp, self.csv_path)
 
+    def count_saved_by_sender(self, sender_id: str) -> int:
+        """Number of accepted images already saved for this publisher."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM images WHERE sender_id = ? AND status = 'saved'",
+                (str(sender_id),),
+            ).fetchone()
+        return int(row["n"])
+
     def total_latency_samples(self) -> int:
         with self._lock:
             row = self._conn.execute(

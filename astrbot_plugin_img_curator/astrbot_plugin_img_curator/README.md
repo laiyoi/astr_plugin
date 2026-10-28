@@ -486,6 +486,8 @@ python benchmark/benchmark.py \
 ## 13. DINOv2 收藏品味模型（Windows 训练 / Ubuntu 推理）
 
 - 训练与导出（独立于插件，不随插件安装）：[`../training/README.md`](../training/README.md)
+- 分类：`skip / suspicious / collect`；`suspicious` 由发布者已保存图片数决定 save/cache/skip，模型不计算该置信度
+- 原始数据预处理（视频抽帧、train/val/test 划分）：`../training/preprocess.py`
 - Windows 训练脚本：`../training/train.py`
 - 验证集阈值：`../training/calibrate_threshold.py`
 - 测试集评估：`../training/evaluate.py`

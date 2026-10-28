@@ -19,9 +19,10 @@
   ],
   "class_names": [
     "skip",
+    "suspicious",
     "collect"
   ],
-  "positive_class_index": 1,
+  "positive_class_index": 2,
   "threshold": 0.95,
   "preprocess": "convert to RGB; resize shortest edge to 256 with bicubic; center crop 224x224; scale to [0,1]; normalize with ImageNet mean/std; NCHW float32",
   "onnx": {
@@ -39,5 +40,9 @@
       "unfreeze_last_blocks": 0,
       "amp": true
     }
+  },
+  "suspicious_policy": {
+    "save_at_saved_count": 5,
+    "cache_below_saved_count": 3
   }
 }
