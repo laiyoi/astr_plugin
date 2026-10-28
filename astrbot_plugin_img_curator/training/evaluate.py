@@ -1,12 +1,11 @@
-"""Evaluate a trained DINOv2 classifier on val or test.
+"""Evaluate the trained DINOv2 classifier on the configured split.
 
-The threshold must come from calibration on val (or an explicit argument for
-diagnostics).  This script never changes the threshold.
+All paths/settings come from training/config.json; run with no arguments.
+The threshold must come from calibration on val; this script never changes it.
 """
 
 from __future__ import annotations
 
-import argparse
 import csv
 import sys
 from pathlib import Path
@@ -15,43 +14,33 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import config_utils  # noqa: E402
 from dataset import TasteDataset, dedupe_records, discover_records, make_loader  # noqa: E402
 from model import POSITIVE_INDEX, eval_transform, load_model_from_checkpoint  # noqa: E402
 from utils import binary_metrics, load_json, resolve_device, save_json  # noqa: E402
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate DINOv2 skip/suspicious/collect classifier")
-    parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--split", choices=["val", "test"], default="test")
-    parser.add_argument("--config", type=Path, default=None)
-    parser.add_argument("--threshold", type=float, default=None)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--dedupe-threshold", type=int, default=6)
-    parser.add_argument("--output", type=Path, default=None)
-    return parser.parse_args()
-
-
 def main() -> int:
-    args = parse_args()
-    device = resolve_device(args.device)
-    threshold = args.threshold
-    if args.config:
-        threshold = float(load_json(args.config).get("threshold", 0.5))
-    if threshold is None:
-        threshold = 0.5
-    if args.threshold is not None:
-        print("WARNING: explicit --threshold is for diagnostics; do not tune it on test.")
+    cfg = config_utils.section("evaluate")
+    p = config_utils.paths()
+    device = resolve_device(str(cfg.device))
+    threshold = float(load_json(p.model_config).get("threshold", 0.5))
+    split = str(cfg.split)
 
-    records, report = dedupe_records(discover_records(args.data_root), threshold=args.dedupe_threshold)
+    records, report = dedupe_records(
+        discover_records(p.data_root, max_image_pixels=int(cfg.max_image_pixels)),
+        threshold=int(cfg.dedupe_threshold),
+    )
     print("Dedupe kept:", report.kept)
-    model, checkpoint = load_model_from_checkpoint(args.checkpoint, device=device)
+    model, checkpoint = load_model_from_checkpoint(p.checkpoint, device=device)
     image_size = int(checkpoint.get("config", {}).get("image_size", 224))
-    dataset = TasteDataset(records, args.split, eval_transform(image_size=image_size))
-    loader = make_loader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    dataset = TasteDataset(records, split, eval_transform(image_size=image_size))
+    loader = make_loader(
+        dataset,
+        batch_size=int(cfg.batch_size),
+        shuffle=False,
+        num_workers=int(cfg.num_workers),
+    )
 
     labels: list[int] = []
     scores: list[float] = []
@@ -68,18 +57,19 @@ def main() -> int:
     collect_labels = [1 if label == POSITIVE_INDEX else 0 for label in labels]
     metrics = binary_metrics(collect_labels, scores, threshold)
     false_positives = [
-        {"path": p, "score": s}
-        for p, y, s in zip(paths, collect_labels, scores)
-        if y == 0 and s >= threshold
+        {"path": path, "score": score}
+        for path, label, score in zip(paths, collect_labels, scores)
+        if label == 0 and score >= threshold
     ]
     false_negatives = [
-        {"path": p, "score": s}
-        for p, y, s in zip(paths, collect_labels, scores)
-        if y == 1 and s < threshold
+        {"path": path, "score": score}
+        for path, label, score in zip(paths, collect_labels, scores)
+        if label == 1 and score < threshold
     ]
+    class_names = list(checkpoint.get("class_names") or ["skip", "suspicious", "collect"])
     output = {
-        "split": args.split,
-        "checkpoint": str(args.checkpoint),
+        "split": split,
+        "checkpoint": str(p.checkpoint),
         "threshold": threshold,
         "metrics": metrics,
         "confusion_matrix": {
@@ -91,26 +81,30 @@ def main() -> int:
         "false_positives": false_positives,
         "false_negatives": false_negatives,
         "dedupe": report.__dict__,
-        "class_names": checkpoint.get("class_names"),
+        "class_names": class_names,
     }
-    out_path = args.output or args.checkpoint.parent / f"evaluation_{args.split}.json"
+    out_path = p.run_dir / f"evaluation_{split}.json"
     save_json(out_path, output)
 
     csv_path = out_path.with_suffix(".csv")
     with open(csv_path, "w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["path", "label", "score", "prediction"], lineterminator="\n")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["path", "label", "score", "prediction"],
+            lineterminator="\n",
+        )
         writer.writeheader()
         for path, label, score in zip(paths, labels, scores):
             writer.writerow(
                 {
                     "path": path,
-                    "label": checkpoint.get("class_names", ["skip", "suspicious", "collect"])[label] if label < len(checkpoint.get("class_names", [])) else str(label),
+                    "label": class_names[label] if label < len(class_names) else str(label),
                     "score": f"{score:.8f}",
-                    "prediction": "collect" if score >= threshold else "skip",
+                    "prediction": "collect" if score >= threshold else "not_collect",
                 }
             )
 
-    print(f"split={args.split} threshold={threshold:.6f}")
+    print(f"split={split} threshold={threshold:.6f}")
     print(
         f"TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']} | "
         f"precision={metrics['precision']:.4f} recall={metrics['recall']:.4f} f1={metrics['f1']:.4f}"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -13,39 +12,23 @@ from PIL import Image, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import config_utils  # noqa: E402
 from dataset import IMAGE_SUFFIXES  # noqa: E402
 from model import eval_transform, load_model_from_checkpoint  # noqa: E402
 from utils import load_json, resolve_device, save_json  # noqa: E402
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check ONNX/PyTorch logits parity")
-    parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--onnx", type=Path, required=True)
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--data-root", type=Path, default=None)
-    parser.add_argument("--image", type=Path, default=None)
-    parser.add_argument("--num-samples", type=int, default=8)
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--output", type=Path, default=None)
-    return parser.parse_args()
-
-
-def collect_images(args) -> list[Path]:
-    if args.image:
-        return [args.image]
-    if not args.data_root:
-        raise ValueError("provide --image or --data-root")
+def collect_images(data_root: Path, num_samples: int) -> list[Path]:
     images: list[Path] = []
     for split in ("test", "val", "train"):
         for class_name in ("collect", "suspicious", "skip"):
-            directory = args.data_root / split / class_name
+            directory = data_root / split / class_name
             if not directory.is_dir():
                 continue
             for path in sorted(directory.iterdir()):
                 if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
                     images.append(path)
-                    if len(images) >= args.num_samples:
+                    if len(images) >= num_samples:
                         return images
     return images
 
@@ -58,16 +41,17 @@ def preprocess(path: Path, input_size: int) -> np.ndarray:
 
 
 def main() -> int:
-    args = parse_args()
-    device = resolve_device(args.device)
-    config = load_json(args.config)
+    cfg = config_utils.section("test_onnx")
+    p = config_utils.paths()
+    device = resolve_device(str(cfg.device))
+    config = load_json(p.model_config)
     input_size = int(config.get("input_size", [224, 224])[0])
-    model, _ = load_model_from_checkpoint(args.checkpoint, device=device)
-    session = ort.InferenceSession(str(args.onnx), providers=["CPUExecutionProvider"])
+    model, _ = load_model_from_checkpoint(p.checkpoint, device=device)
+    session = ort.InferenceSession(str(p.onnx), providers=["CPUExecutionProvider"])
     input_name = config.get("onnx", {}).get("input_name", "input")
     output_name = config.get("onnx", {}).get("output_name", "logits")
 
-    images = collect_images(args)
+    images = collect_images(p.data_root, int(cfg.num_samples))
     if not images:
         raise FileNotFoundError("no test images found")
     rows = []
@@ -87,15 +71,15 @@ def main() -> int:
         print(f"{path.name}: max_abs_diff={max_diff:.8f} allclose={ok}")
 
     report = {
-        "onnx": str(args.onnx),
-        "checkpoint": str(args.checkpoint),
+        "onnx": str(p.onnx),
+        "checkpoint": str(p.checkpoint),
         "input_size": input_size,
         "samples": len(rows),
         "allclose": all_ok,
         "max_abs_diff": max((r["max_abs_diff"] for r in rows), default=0.0),
         "rows": rows,
     }
-    output = args.output or args.onnx.parent / "onnx_parity.json"
+    output = p.onnx.parent / "onnx_parity.json"
     save_json(output, report)
     print(f"max_abs_diff={report['max_abs_diff']:.8f} allclose={all_ok}")
     print(f"wrote {output}")

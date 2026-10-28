@@ -222,7 +222,7 @@ def make_loader(
     sampler = None
     if balanced_sampler:
         labels = [record.label for record in dataset.records]
-        counts = np.bincount(labels, minlength=2)
+        counts = np.bincount(labels, minlength=len(CLASS_TO_INDEX))
         sample_weights = [1.0 / counts[label] for label in labels]
         generator = torch.Generator().manual_seed(seed)
         sampler = WeightedRandomSampler(
@@ -239,6 +239,6 @@ def make_loader(
         sampler=sampler,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        persistent_workers=num_workers > 0,
+        persistent_workers=False,
         drop_last=False,
     )

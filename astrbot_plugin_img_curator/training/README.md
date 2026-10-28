@@ -199,32 +199,57 @@ count >= save_at_saved_count -> save
 
 `inference.py` 提供 `decide_save(label, publisher_saved_count, policy)`；模型本身不计算这个数量。插件侧可以用 `Store.count_saved_by_sender(sender_id)` 取这个计数。
 
-## 5. 在验证集校准阈值（优先降低误收藏）
+`config.json` 还包含：
 
-```powershell
-python training\calibrate_threshold.py `
-  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
-  --data-root training\dataset `
-  --config D:\runs\taste_dinov2_v1\model_config.json `
-  --target-precision 0.95 `
-  --update-config
+```json
+"calibrate": {
+  "split": "val",
+  "target_precision": 0.95,
+  "batch_size": 32,
+  "num_workers": 0,
+  "device": "cuda",
+  "dedupe_threshold": 6,
+  "update_model_config": true,
+  "max_image_pixels": 40000000
+},
+"evaluate": {
+  "split": "test",
+  "batch_size": 32,
+  "num_workers": 0,
+  "device": "cuda",
+  "dedupe_threshold": 6,
+  "max_image_pixels": 40000000
+},
+"export": {"opset": 17, "device": "cuda"},
+"test_onnx": {"num_samples": 8, "device": "cuda"}
 ```
 
-策略：在验证集上选择 **precision ≥ target** 的前提下 recall 最大的阈值；如果达不到目标，会选验证集上 precision 最高的点并打印 WARNING。
+## 5. 校准阈值
 
-**不要对 test 调阈值。** `calibrate_threshold.py` 只读取 val。
+参数在 `training/config.json` 的 `calibrate` 段，直接运行：
+
+```powershell
+python training\calibrate_threshold.py
+```
+
+默认读取：
+
+```text
+runs/taste_dinov2_v1/ckpt/best.pt
+runs/taste_dinov2_v1/model_config.json
+training/dataset
+```
+
+在验证集上选择 precision ≥ target 的前提下 recall 最大的阈值；结果写 `runs/taste_dinov2_v1/threshold.json`，并自动更新 `model_config.json`。**不要对 test 调阈值。**
 
 ---
 
-## 6. 评估（只在 test 上报告）
+## 6. 评估
+
+参数在 `training/config.json` 的 `evaluate` 段，直接运行：
 
 ```powershell
-python training\evaluate.py `
-  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
-  --data-root training\dataset `
-  --config D:\runs\taste_dinov2_v1\model_config.json `
-  --split test `
-  --device cuda
+python training\evaluate.py
 ```
 
 输出：
@@ -237,39 +262,33 @@ python training\evaluate.py `
 
 ## 7. 导出 ONNX
 
+参数在 `training/config.json` 的 `export` 段，直接运行：
+
 ```powershell
-python training\export_onnx.py `
-  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
-  --config D:\runs\taste_dinov2_v1\model_config.json `
-  --output-dir D:\runs\taste_dinov2_v1\deploy `
-  --opset 17 `
-  --device cuda
+python training\export_onnx.py
 ```
 
 生成：
 
 ```text
-deploy\
+runs/taste_dinov2_v1/deploy/
   taste_classifier.onnx
   model_config.json
 ```
 
-`model_config.json` 包含：输入尺寸、RGB 转换、均值和标准差、类别映射、正向类别索引、阈值、模型版本、训练配置、ONNX 输入/输出名。
+`model_config.json` 包含输入尺寸、RGB 转换、均值和标准差、类别映射、正向类别索引、阈值、版本、ONNX 输入/输出名和 suspicious 策略。
 
 ---
 
 ## 8. Windows 上验证 PyTorch / ONNX 一致性
 
+参数在 `training/config.json` 的 `test_onnx` 段，直接运行：
+
 ```powershell
-python training\test_onnx.py `
-  --checkpoint D:\runs\taste_dinov2_v1\ckpt\best.pt `
-  --onnx D:\runs\taste_dinov2_v1\deploy\taste_classifier.onnx `
-  --config D:\runs\taste_dinov2_v1\deploy\model_config.json `
-  --data-root training\dataset `
-  --device cuda
+python training\test_onnx.py
 ```
 
-它会用部署时完全相同的预处理跑 test 图片，比较 PyTorch 与 ONNX 的 logits：
+它会用部署时完全相同的预处理跑 test 图片，比较 PyTorch 与 ONNX logits：
 
 - 输出 `max_abs_diff` 和 `allclose`；
 - 默认要求 `atol=1e-4`；

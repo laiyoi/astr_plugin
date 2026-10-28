@@ -117,6 +117,10 @@ def main() -> int:
     test_counts = class_counts(records, "test")
     print(f"train={train_counts}, val={val_counts}, test={test_counts}")
 
+    if sys.platform == "win32" and args.num_workers > 0:
+        print("Windows DataLoader: forcing num_workers=0 to avoid worker crashes.")
+        args.num_workers = 0
+
     train_ds = TasteDataset(records, "train", train_transform(args.image_size))
     val_ds = TasteDataset(records, "val", eval_transform(args.image_size))
     train_loader = make_loader(
