@@ -220,6 +220,106 @@ class ForwardCollectorTests(unittest.TestCase):
             self.assertEqual(len([r for r in rows if r["status"] == "saved"]), 1)
             self.assertEqual(len(list(cfg.forward_dir.rglob("*.jpg"))), 1)
 
+    def test_forward_gif_is_saved_without_conversion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            gif_path = base / "anim.gif"
+            frames = [Image.new("RGB", (32, 32), color) for color in ((255, 0, 0), (0, 255, 0))]
+            frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=100, loop=0)
+            cfg = PluginConfig.load({"forward_dir": "training_data/forwarded"}, base)
+            cfg.ensure_directories()
+
+            class FakeBot:
+                async def call_action(self, action, **kwargs):
+                    return {"messages": [{"message_id": 1, "message": [{"type": "image", "data": {"file": str(gif_path)}}]}]}
+
+            collector = ForwardCollector(cfg, SimpleNamespace(info=lambda *a, **k: None,
+                                                                 warning=lambda *a, **k: None,
+                                                                 error=lambda *a, **k: None,
+                                                                 exception=lambda *a, **k: None,
+                                                                 debug=lambda *a, **k: None))
+            event = SimpleNamespace(
+                message_obj=SimpleNamespace(message=[Forward(id="99")], message_id="m", raw_message=None),
+                bot=FakeBot(),
+                get_sender_id=lambda: "10001",
+                get_sender_name=lambda: "发起人",
+                get_self_id=lambda: "999",
+            )
+
+            async def run():
+                await collector.start()
+                try:
+                    collector.arm("private:10001", 1)
+                    self.assertTrue(await collector.maybe_collect(event, "private:10001", "", "私聊"))
+                    await collector._queue.join()
+                finally:
+                    await collector.stop()
+
+            asyncio.run(run())
+            outputs = list((cfg.forward_dir / "images").glob("*.gif"))
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(outputs[0].read_bytes(), gif_path.read_bytes())
+            rows = [
+                json.loads(line)
+                for path in cfg.forward_dir.rglob("metadata.jsonl")
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line
+            ]
+            self.assertEqual(rows[-1]["mime"], "image/gif")
+
+    def test_forward_video_is_saved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            video_path = base / "clip.mp4"
+            video_path.write_bytes(b"fake-video-bytes")
+            cfg = PluginConfig.load({"forward_dir": "training_data/forwarded"}, base)
+            cfg.ensure_directories()
+
+            class FakeBot:
+                async def call_action(self, action, **kwargs):
+                    return {
+                        "messages": [
+                            {
+                                "message_id": 42,
+                                "sender": {"user_id": 7, "nickname": "视频作者"},
+                                "message": [
+                                    {"type": "video", "data": {"file": str(video_path)}},
+                                ],
+                            },
+                        ],
+                    }
+
+            collector = ForwardCollector(cfg, SimpleNamespace(info=lambda *a, **k: None,
+                                                                 warning=lambda *a, **k: None,
+                                                                 error=lambda *a, **k: None,
+                                                                 exception=lambda *a, **k: None,
+                                                                 debug=lambda *a, **k: None))
+            event = SimpleNamespace(
+                message_obj=SimpleNamespace(message=[Forward(id="99")], message_id="m", raw_message=None),
+                bot=FakeBot(),
+                get_sender_id=lambda: "10001",
+                get_sender_name=lambda: "发起人",
+                get_self_id=lambda: "999",
+            )
+
+            async def run():
+                await collector.start()
+                try:
+                    collector.arm("private:10001", 1)
+                    self.assertTrue(await collector.maybe_collect(event, "private:10001", "", "私聊"))
+                    await collector._queue.join()
+                finally:
+                    await collector.stop()
+
+            asyncio.run(run())
+            metas = list(cfg.forward_dir.rglob("metadata.jsonl"))
+            rows = [json.loads(line) for p in metas for line in p.read_text(encoding="utf-8").splitlines() if line]
+            saved = [r for r in rows if r["status"] == "saved"]
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["media_type"], "video")
+            self.assertTrue(saved[0]["file"].startswith("videos/"))
+            self.assertEqual(len(list((cfg.forward_dir / "videos").glob("*.mp4"))), 1)
+
     def test_nested_nodes_and_forward_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

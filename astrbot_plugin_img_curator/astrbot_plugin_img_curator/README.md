@@ -199,6 +199,7 @@ int8 放到 `models/clip_vit_b32_int8/`，文件名同样是上面三个。
 | `forward_dir` | 空 → `training_data/forwarded/` | 合并记录训练图片目录 |
 | `forward_max_minutes` | `60` | 单次采集最长分钟数 |
 | `forward_max_images` | `500` | 单批最多保存图片数 |
+| `forward_max_videos` | `100` | 单批最多保存视频数 |
 | `forward_max_nodes` | `2000` | 单批最多节点数 |
 | `forward_max_depth` | `8` | 合并记录最大嵌套深度 |
 | `video_max_seconds` | `15` | 视频最多解码前 N 秒 |
@@ -290,13 +291,14 @@ int8 放到 `models/clip_vit_b32_int8/`，文件名同样是上面三个。
 - 私聊只处理合并记录，不处理普通私聊图片；
 - 自动处理 `Nodes`/`Node`，遇到只有 `Forward(id)` 的段会调用 OneBot `get_forward_msg` 拉取；
 - 支持嵌套转发，深度上限 `forward_max_depth`；
-- 所有训练图片平铺保存为 `training_data/forwarded/images/<uuid>.<ext>`；
+- 所有训练图片平铺保存为 `training_data/forwarded/images/<uuid4>.<ext>`，GIF/BMP 也按原文件直接保存，不抽帧、不转码；
+- 视频平铺保存为 `training_data/forwarded/videos/<uuid4>.<原扩展名>`；
 - 每批写 `metadata.jsonl`（发送者 QQ/昵称、群号/群名、节点发送者、时间、嵌套路径、SHA-256、尺寸）；
 - 写 `batch.json` 汇总和全局 `index.jsonl` 做跨批次 SHA 去重；
 - 图片标签为 `unlabeled`，不会自动进入 `collect`/`skip`；
 - 不调用识别模型，使用独立队列，避免和正式收藏抢模型。
 
-元数据示例字段：`batch_id, image_id, image_index, status, label, file, sha256, group_id, group_name, sender_id, sender_name, node_sender_id, node_sender_name, node_time, depth, forward_path, collected_at`。
+元数据示例字段：`batch_id, image_id, image_index, status, label, file, sha256, group_id, group_name, sender_id, sender_name, node_sender_id, node_sender_name, node_time, depth, forward_path, collected_at`。视频行使用 `video_id`、`media_type=video`，没有 `width/height`。
 
 示例：
 
@@ -314,10 +316,10 @@ int8 放到 `models/clip_vit_b32_int8/`，文件名同样是上面三个。
 
 ### 7.1 图片
 
-- 文件名：`uuid4().hex` 风格的完整 UUID + 扩展名，例如 `037f2a70-2903-4718-b9d1-628e721c39da.jpg`。
+- 文件名：`str(uuid.uuid4())` 的完整 UUID + 扩展名，例如 `037f2a70-2903-4718-b9d1-628e721c39da.jpg`。
 - 所有收藏图片平铺在 `save_dir`，不按日期/群号建目录。
 - 待确认图片同样用 UUID，确认后移动到 `save_dir`，文件名不变。
-- 不保存 GIF/动画；WebP 只接受静态帧。
+- 正式收藏不保存 GIF/动画；WebP 只接受静态帧。训练采集不走这里，GIF/动画会原样保存。
 - 默认 `strip_metadata=true`：保存前重新编码，去掉 EXIF/GPS/设备信息；会轻微改变 JPEG/WebP 画质。若必须保留原始字节，可关闭，但请自行评估隐私风险。
 
 ### 7.2 CSV 元数据

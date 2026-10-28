@@ -29,6 +29,7 @@
   "forward_dir": "training_data/forwarded",
   "forward_max_minutes": 60,
   "forward_max_images": 500,
+  "forward_max_videos": 100,
   "forward_max_nodes": 2000,
   "forward_max_depth": 8,
   "max_image_pixels_million": 40,

@@ -19,12 +19,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import urlparse
 
 from astrbot.api.message_components import Forward, Image as MessageImage
 from astrbot.api.message_components import Json, Node, Nodes, Video as MessageVideo
 
 from .config import PluginConfig
-from .sources import ImageFetcher, sanitize_image
+from .sources import ImageFetcher
 from .store import now_iso
 
 
@@ -95,6 +96,20 @@ def _segment_content(data: Any) -> list[Any]:
     return []
 
 
+VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
+
+
+def _video_suffix(video: Any) -> str:
+    for attr in ("file", "path", "url"):
+        value = getattr(video, attr, None)
+        if not isinstance(value, str) or not value:
+            continue
+        suffix = Path(urlparse(value).path).suffix.lower()
+        if suffix in VIDEO_SUFFIXES:
+            return suffix
+    return ".mp4"
+
+
 def _normalize_forward_payload(payload: Any) -> list[Any]:
     if isinstance(payload, list):
         return payload
@@ -138,12 +153,14 @@ class ForwardCollector:
             timeout_sec=cfg.image_download_timeout_sec,
         )
         self._seen: set[str] = set()
+        self._seen_paths: dict[str, str] = {}
         self._sessions_path = self.root / "sessions.json"
         self._index_lock = asyncio.Lock()
         self._load_sessions()
         self._stats = {
             "batches": 0,
             "images": 0,
+            "videos": 0,
             "duplicates": 0,
             "skipped_videos": 0,
             "errors": 0,
@@ -283,6 +300,7 @@ class ForwardCollector:
         # stays under the batch UUID directory.
         images_dir = self.root / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
+        (self.root / "videos").mkdir(parents=True, exist_ok=True)
         started_at = now_iso()
         metadata: list[dict[str, Any]] = []
         started_ts = time.time()
@@ -291,6 +309,7 @@ class ForwardCollector:
             "index": 0,
             "nodes": 0,
             "videos": 0,
+            "skipped_videos": 0,
             "stopped": False,
             "unresolved_nodes": 0,
         }
@@ -333,7 +352,8 @@ class ForwardCollector:
                 "saved_images": state["images"],
                 "candidate_images": state["index"],
                 "nodes_seen": state["nodes"],
-                "skipped_videos": state["videos"],
+                "saved_videos": state["videos"],
+                "skipped_videos": state["skipped_videos"],
                 "unresolved_nodes": state["unresolved_nodes"],
                 "stopped_by_limit": state["stopped"],
                 "label": "unlabeled",
@@ -343,17 +363,19 @@ class ForwardCollector:
             )
             self._stats["batches"] += 1
             self._stats["images"] += state["images"]
-            self._stats["skipped_videos"] += state["videos"]
+            self._stats["videos"] += state["videos"]
+            self._stats["skipped_videos"] += state["skipped_videos"]
             duplicates = sum(1 for row in records if row.get("status") == "duplicate")
             self.logger.info(
                 "合并聊天记录入库: batch=%s saved=%d nodes=%d unresolved=%d "
-                "duplicates=%d videos=%d elapsed=%dms",
+                "duplicates=%d videos=%d skipped_videos=%d elapsed=%dms",
                 batch_id,
                 state["images"],
                 state["nodes"],
                 state["unresolved_nodes"],
                 duplicates,
                 state["videos"],
+                state["skipped_videos"],
                 round((time.time() - started_ts) * 1000),
             )
 
@@ -392,7 +414,19 @@ class ForwardCollector:
                     job=job,
                 )
             elif isinstance(component, MessageVideo):
-                state["videos"] += 1
+                await self._save_video(
+                    component,
+                    images_dir=images_dir,
+                    metadata=metadata,
+                    state=state,
+                    depth=depth,
+                    path=path + [index],
+                    node_sender_id=node_sender_id,
+                    node_sender_name=node_sender_name,
+                    node_time=node_time,
+                    batch_id=batch_id,
+                    job=job,
+                )
             elif isinstance(component, Node):
                 if state["nodes"] >= self.cfg.forward_max_nodes:
                     state["stopped"] = True
@@ -577,7 +611,23 @@ class ForwardCollector:
                     job=job,
                 )
             elif seg_type == "video":
-                state["videos"] += 1
+                await self._save_video(
+                    SimpleNamespace(
+                        url=str(data.get("url") or ""),
+                        path=str(data.get("path") or ""),
+                        file=str(data.get("file") or ""),
+                    ),
+                    images_dir=images_dir,
+                    metadata=metadata,
+                    state=state,
+                    depth=depth,
+                    path=path + [index],
+                    node_sender_id=node_sender_id,
+                    node_sender_name=node_sender_name,
+                    node_time=node_time,
+                    batch_id=batch_id,
+                    job=job,
+                )
             elif seg_type in {"node", "nodes"}:
                 content = _segment_content(data) or _segment_content(segment)
                 if not content:
@@ -801,14 +851,20 @@ class ForwardCollector:
         image_index = state["index"]
         temp = None
         try:
-            temp = await self._fetcher.fetch(image, self.cfg.tmp_dir)
-            if temp.sha256 in self._seen:
+            temp = await self._fetcher.fetch_raw(image, self.cfg.tmp_dir)
+            existing = self._seen_paths.get(temp.sha256)
+            if existing and not (self.root / existing).is_file():
+                self._seen.discard(temp.sha256)
+                self._seen_paths.pop(temp.sha256, None)
+                existing = None
+            if temp.sha256 in self._seen and existing:
                 self._stats["duplicates"] += 1
                 metadata.append(
                     {
                         "batch_id": batch_id,
                         "image_index": image_index,
                         "status": "duplicate",
+                        "file": existing,
                         "sha256": temp.sha256,
                         "group_id": job.group_id,
                         "group_name": job.group_name,
@@ -824,10 +880,9 @@ class ForwardCollector:
                 return
             image_id = str(uuid.uuid4())
             target = images_dir / f"{image_id}{temp.ext}"
-            if self.cfg.strip_metadata:
-                await asyncio.to_thread(sanitize_image, temp.path, target, temp.ext)
-            else:
-                await asyncio.to_thread(shutil.move, str(temp.path), str(target))
+            # Training data keeps the original bytes; do not re-encode or
+            # extract one frame from animated GIF/WebP.
+            await asyncio.to_thread(shutil.move, str(temp.path), str(target))
             size_bytes = target.stat().st_size
             row = {
                 "batch_id": batch_id,
@@ -854,8 +909,10 @@ class ForwardCollector:
             }
             metadata.append(row)
             state["images"] += 1
+            relative = str(target.relative_to(self.root))
             self._seen.add(temp.sha256)
-            await self._append_index({"sha256": temp.sha256, "path": str(target.relative_to(self.root)), "batch_id": batch_id})
+            self._seen_paths[temp.sha256] = relative
+            await self._append_index({"sha256": temp.sha256, "path": relative, "batch_id": batch_id})
         except Exception as exc:  # noqa: BLE001
             self._stats["errors"] += 1
             self.logger.warning("合并转发中的图片保存失败: %s", exc)
@@ -876,6 +933,100 @@ class ForwardCollector:
             if temp is not None:
                 temp.cleanup()
 
+    async def _save_video(
+        self,
+        video: Any,
+        *,
+        images_dir: Path,
+        metadata: list[dict[str, Any]],
+        state: dict[str, Any],
+        depth: int,
+        path: list[int],
+        node_sender_id: str,
+        node_sender_name: str,
+        node_time: int,
+        batch_id: str,
+        job: ForwardJob,
+    ) -> None:
+        if state["stopped"]:
+            return
+        if state["videos"] >= self.cfg.forward_max_videos:
+            state["stopped"] = True
+            self.logger.warning("单批合并转发视频数达到上限 %d", self.cfg.forward_max_videos)
+            return
+        temp = None
+        try:
+            temp = await self._fetcher.fetch_video(
+                video,
+                self.cfg.tmp_dir,
+                max_bytes=self.cfg.max_video_bytes,
+            )
+            existing = self._seen_paths.get(temp.sha256)
+            if existing and not (self.root / existing).is_file():
+                self._seen.discard(temp.sha256)
+                self._seen_paths.pop(temp.sha256, None)
+                existing = None
+            if temp.sha256 in self._seen and existing:
+                self._stats["duplicates"] += 1
+                metadata.append(
+                    {
+                        "batch_id": batch_id,
+                        "status": "duplicate",
+                        "file": existing,
+                        "media_type": "video",
+                        "sha256": temp.sha256,
+                        "group_id": job.group_id,
+                        "group_name": job.group_name,
+                        "sender_id": job.sender_id,
+                        "sender_name": job.sender_name,
+                        "node_sender_id": node_sender_id,
+                        "node_sender_name": node_sender_name,
+                        "depth": depth,
+                        "forward_path": ".".join(str(x) for x in path),
+                        "collected_at": now_iso(),
+                    }
+                )
+                return
+            video_id = str(uuid.uuid4())
+            target = (images_dir.parent / "videos") / f"{video_id}{_video_suffix(video)}"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(shutil.move, str(temp.path), str(target))
+            row = {
+                "batch_id": batch_id,
+                "video_id": video_id,
+                "status": "saved",
+                "media_type": "video",
+                "label": "unlabeled",
+                "file": str(target.relative_to(self.root)),
+                "sha256": temp.sha256,
+                "size_bytes": target.stat().st_size,
+                "group_id": job.group_id,
+                "group_name": job.group_name,
+                "sender_id": job.sender_id,
+                "sender_name": job.sender_name,
+                "node_sender_id": node_sender_id,
+                "node_sender_name": node_sender_name,
+                "node_time": node_time,
+                "depth": depth,
+                "forward_path": ".".join(str(x) for x in path),
+                "collected_at": now_iso(),
+            }
+            metadata.append(row)
+            state["videos"] += 1
+            relative = str(target.relative_to(self.root))
+            self._seen.add(temp.sha256)
+            self._seen_paths[temp.sha256] = relative
+            await self._append_index(
+                {"sha256": temp.sha256, "path": relative, "batch_id": batch_id}
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._stats["errors"] += 1
+            state["skipped_videos"] += 1
+            self.logger.warning("合并转发中的视频保存失败: %s", exc)
+        finally:
+            if temp is not None:
+                temp.cleanup()
+
     async def _append_index(self, row: dict[str, Any]) -> None:
         async with self._index_lock:
             with open(self.root / "index.jsonl", "a", encoding="utf-8") as handle:
@@ -892,7 +1043,10 @@ class ForwardCollector:
                     if not line:
                         continue
                     row = json.loads(line)
-                    if row.get("sha256"):
-                        self._seen.add(str(row["sha256"]))
+                    digest = str(row.get("sha256") or "")
+                    relative = str(row.get("path") or "")
+                    if digest and relative and (self.root / relative).is_file():
+                        self._seen.add(digest)
+                        self._seen_paths[digest] = relative
         except Exception:
             self.logger.exception("读取合并转发索引失败")

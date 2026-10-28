@@ -37,7 +37,7 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 
 ## 2. 数据来源与目录
 
-可以用插件的合并记录采集作为原始来源：在群里发送 `/imgfilter forward 10`，再发合并聊天记录；**所有图片会平铺保存到 `training_data/forwarded/images/`**，每批的 `metadata.jsonl` 仍放在 `training_data/forwarded/<batch_id>/`。之后按 `collect` / `skip` 分好类即可。
+可以用插件的合并记录采集作为原始来源：在群里发送 `/imgfilter forward 10`，再发合并聊天记录；**所有图片（含 GIF/BMP，原文件不抽帧）会平铺保存到 `training_data/forwarded/images/`，视频保存到 `training_data/forwarded/videos/`**；每批的 `metadata.jsonl` 仍放在 `training_data/forwarded/<batch_id>/`。之后按 `collect` / `skip` 分好类即可。
 
 必须人工标注成 `collect` / `skip` 两类。现在支持两种目录：
 

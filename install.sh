@@ -32,7 +32,7 @@ echo "source: $SRC"
 echo "target: $DEST"
 "${RSYNC[@]}" "${ARGS[@]}" "$SRC/" "$DEST/"
 if [[ "$SUDO_CHOWN" == "1" && "$DRY_RUN" == "0" ]]; then
-  sudo chown -R "$(id -u):$(id -g)" "$DEST"
+  sudo chown -R root:root "$DEST"
 fi
 
 echo "copied plugin only; training/ and tests/ were not included."

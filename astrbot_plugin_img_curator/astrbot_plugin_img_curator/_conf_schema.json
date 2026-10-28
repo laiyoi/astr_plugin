@@ -137,6 +137,13 @@
       "step": 10
     }
   },
+  "forward_max_videos": {
+    "description": "单批合并记录最多保存视频数",
+    "type": "int",
+    "default": 100,
+    "min": 1,
+    "max": 10000
+  },
   "forward_max_nodes": {
     "description": "单批合并记录最多节点数",
     "type": "int",

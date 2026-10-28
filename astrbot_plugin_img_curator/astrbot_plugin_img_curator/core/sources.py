@@ -22,6 +22,11 @@ import aiohttp
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 ALLOWED_FORMATS = {"JPEG": (".jpg", "image/jpeg"), "PNG": (".png", "image/png"), "WEBP": (".webp", "image/webp")}
+TRAINING_FORMATS = {
+    **ALLOWED_FORMATS,
+    "GIF": (".gif", "image/gif"),
+    "BMP": (".bmp", "image/bmp"),
+}
 
 
 class ImageFetchError(Exception):
@@ -259,6 +264,71 @@ class ImageFetcher:
             digest = await asyncio.to_thread(_sha256_file, tmp_path)
             # All temp files end in .download while being validated; the
             # pipeline moves them to a UUID name ending in the real extension.
+            final = tmp_path.with_suffix(".img")
+            os.replace(tmp_path, final)
+            return TempImage(
+                path=final,
+                sha256=digest,
+                mime=mime,
+                ext=ext,
+                width=width,
+                height=height,
+                size_bytes=size,
+                source="http" if raw is not None else "local",
+            )
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+
+    async def fetch_raw(self, image: object, tmp_dir: Path) -> TempImage:
+        """Fetch an image for dataset storage without model-side validation.
+
+        Training collection keeps the original raster, including animated GIF
+        and WebP; it does not re-encode or extract a single frame.
+        """
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        raw: bytes | None = None
+        local: Path | None = None
+        for value in self._candidates(image):
+            if value.startswith(("base64://", "data:")):
+                raw = _decode_base64(value, self.max_bytes)
+                break
+            if value.startswith(("http://", "https://")):
+                raw = await self._http_bytes(value)
+                break
+            candidate = _local_path(value)
+            if candidate and candidate.is_file():
+                local = candidate
+                break
+
+        if raw is None and local is None:
+            raise ImageFetchError("no usable image URL, base64 payload, or local path")
+
+        tmp_path = tmp_dir / f"{uuid.uuid4().hex}.download"
+        try:
+            if raw is not None:
+                if len(raw) > self.max_bytes:
+                    raise ImageFetchError(f"image exceeds {self.max_bytes} bytes")
+                await asyncio.to_thread(tmp_path.write_bytes, raw)
+            else:
+                assert local is not None
+                size = local.stat().st_size
+                if size > self.max_bytes:
+                    raise ImageFetchError(f"local image exceeds {self.max_bytes} bytes")
+                await asyncio.to_thread(_copy_file, local, tmp_path)
+
+            try:
+                with Image.open(tmp_path) as im:
+                    fmt = im.format
+                    width, height = im.size
+            except (UnidentifiedImageError, OSError, ValueError) as exc:
+                raise ImageFetchError("not a readable image") from exc
+            if fmt not in TRAINING_FORMATS:
+                raise ImageFetchError(f"unsupported training image format {fmt or 'unknown'}")
+            ext, mime = TRAINING_FORMATS[fmt]
+            digest = await asyncio.to_thread(_sha256_file, tmp_path)
+            size = tmp_path.stat().st_size
             final = tmp_path.with_suffix(".img")
             os.replace(tmp_path, final)
             return TempImage(

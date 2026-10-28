@@ -76,6 +76,7 @@ class PluginConfig:
     max_pending_files: int
     forward_max_minutes: int
     forward_max_images: int
+    forward_max_videos: int
     forward_max_nodes: int
     forward_max_depth: int
     cpu_threads: int
@@ -136,6 +137,7 @@ class PluginConfig:
             max_pending_files=_int(raw, "max_pending_files", 500, 0, 100_000),
             forward_max_minutes=_int(raw, "forward_max_minutes", 60, 1, 1440),
             forward_max_images=_int(raw, "forward_max_images", 500, 1, 10_000),
+            forward_max_videos=_int(raw, "forward_max_videos", 100, 1, 10_000),
             forward_max_nodes=_int(raw, "forward_max_nodes", 2000, 1, 100_000),
             forward_max_depth=_int(raw, "forward_max_depth", 8, 1, 32),
             cpu_threads=_int(raw, "cpu_threads", min(4, os.cpu_count() or 4), 1, 64),
