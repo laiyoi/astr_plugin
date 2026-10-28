@@ -40,6 +40,8 @@ _PLUGIN_ROOT = _SCRIPT_DIR.parent / "astrbot_plugin_img_curator"
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
+from PIL import Image  # noqa: E402
+
 from core.video import VIDEO_SUFFIXES, extract_frames, ffmpeg_available  # noqa: E402
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
@@ -82,7 +84,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def discover(raw_root: Path) -> list[Item]:
+def discover(raw_root: Path, max_image_pixels: int = 40_000_000) -> list[Item]:
     items: list[Item] = []
     seen: dict[str, Item] = {}
     for class_name, label in CLASSES.items():
@@ -100,6 +102,16 @@ def discover(raw_root: Path) -> list[Item]:
                 print(f"skip exact duplicate: {path} -> {seen[digest].path}")
                 continue
             is_video = suffix in VIDEO_SUFFIXES
+            if not is_video:
+                try:
+                    with Image.open(path) as image:
+                        width, height = image.size
+                except Exception as exc:  # noqa: BLE001
+                    print(f"skip unreadable image: {path} ({exc})")
+                    continue
+                if width <= 0 or height <= 0 or width * height > max_image_pixels:
+                    print(f"skip oversized image: {path} ({width}x{height})")
+                    continue
             group = f"video:{digest}" if is_video else f"image:{digest}"
             item = Item(path=path, label=label, group=group, sha256=digest)
             seen[digest] = item
@@ -187,7 +199,7 @@ def main() -> int:
     if args.clean and args.output_root.exists():
         shutil.rmtree(args.output_root)
 
-    items = discover(args.raw_root)
+    items = discover(args.raw_root, args.max_image_pixels)
     assign_splits(
         items,
         val_ratio=args.val_ratio,

@@ -102,7 +102,8 @@ python training\preprocess.py
 - 同一视频的所有帧分到同一个 split，避免泄漏；
 - 按 `collect` / `suspicious` / `skip` 分层划分 train/val/test，默认 70/15/15；
 - 输出 `training/dataset/preprocess_report.json`；
-- `clean: true` 会先删除整个输出目录，慎用。
+- `clean: true` 会先删除整个输出目录，慎用；
+- 超大/损坏图片会按 `max_image_pixels`（默认 4000 万像素）跳过并打印路径。
 
 处理完成后目录就是训练脚本需要的 `train/val/test/{collect,suspicious,skip}` 结构。
 
@@ -123,14 +124,18 @@ python training\train.py
   "data_root": "dataset",
   "output_dir": "runs/taste_dinov2_v1",
   "checkpoint_dir": "ckpt",
-  "save_every_epochs": 20
+  "save_every_epochs": 20,
+  "max_image_pixels": 40000000,
+  "num_workers": 4
 }
 ```
 
 - 不设置总 epoch 数，按验证集 early stopping 停止；
 - 每 `save_every_epochs` 个 epoch 自动保存 `ckpt/epoch_XXXX.pt`，默认 20；
 - 同时保存 `ckpt/last.pt` 和 `ckpt/best.pt`；
-- `checkpoint_dir` 相对 `output_dir`，也可以写绝对路径。
+- `checkpoint_dir` 相对 `output_dir`，也可以写绝对路径；
+- 超大/损坏图片在扫描阶段会跳过，不会进入 DataLoader；
+- Windows 如果仍报 `MemoryError`，先把 `num_workers` 改成 `0`，并把 `max_image_pixels` 降到 `20000000`。
 
 TensorBoard 默认开启，日志写到：
 

@@ -74,7 +74,11 @@ def hamming(a: int, b: int) -> int:
     return int(a ^ b).bit_count()
 
 
-def discover_records(data_root: Path) -> list[Record]:
+def discover_records(
+    data_root: Path,
+    *,
+    max_image_pixels: int = 40_000_000,
+) -> list[Record]:
     records: list[Record] = []
     for split in SPLITS:
         for class_name, label in CLASS_TO_INDEX.items():
@@ -82,8 +86,18 @@ def discover_records(data_root: Path) -> list[Record]:
             if not directory.is_dir():
                 raise FileNotFoundError(f"missing directory: {directory}")
             for path in sorted(directory.rglob("*")):
-                if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
-                    records.append(Record(path=path, label=label, split=split))
+                if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
+                    continue
+                try:
+                    with Image.open(path) as image:
+                        width, height = image.size
+                except Exception as exc:  # noqa: BLE001
+                    print(f"skip unreadable image: {path} ({exc})")
+                    continue
+                if width <= 0 or height <= 0 or width * height > max_image_pixels:
+                    print(f"skip oversized image: {path} ({width}x{height})")
+                    continue
+                records.append(Record(path=path, label=label, split=split))
     if not records:
         raise ValueError("no images found")
     for record in records:

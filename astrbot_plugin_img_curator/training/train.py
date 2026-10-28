@@ -106,7 +106,7 @@ def main() -> int:
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Scanning {args.data_root} ...")
-    records = discover_records(args.data_root)
+    records = discover_records(args.data_root, max_image_pixels=args.max_image_pixels)
     records, report = dedupe_records(records, threshold=args.dedupe_threshold)
     write_dedupe_report(args.output_dir / "dedupe_report.json", report)
     print("Kept per split:", report.kept)
