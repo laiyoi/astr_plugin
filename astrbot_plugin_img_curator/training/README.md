@@ -254,8 +254,8 @@ python training\evaluate.py
 
 输出：
 
-- `evaluation_test.json`：Precision、Recall、F1、混淆矩阵；
-- `evaluation_test.csv`：每张图的 label/score/prediction；
+- `evaluation_test.json`：三分类 confusion matrix、per-class precision/recall/F1、macro F1/accuracy，以及 collect-vs-rest 的阈值指标；
+- `evaluation_test.csv`：每张图的真实类别、三分类预测、collect 概率和阈值；
 - `false_positives`、`false_negatives` 列表。
 
 ---

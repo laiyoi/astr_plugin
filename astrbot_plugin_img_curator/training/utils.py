@@ -43,6 +43,48 @@ def binary_metrics(labels: list[int], scores: list[float], threshold: float) -> 
     }
 
 
+def multiclass_metrics(
+    labels: list[int],
+    predictions: list[int],
+    class_names: list[str],
+) -> dict[str, Any]:
+    """Accuracy, macro F1, per-class precision/recall and confusion matrix."""
+    n = len(class_names)
+    confusion = [[0 for _ in range(n)] for _ in range(n)]
+    for truth, pred in zip(labels, predictions):
+        if 0 <= truth < n and 0 <= pred < n:
+            confusion[truth][pred] += 1
+    per_class: dict[str, dict[str, float | int]] = {}
+    f1s: list[float] = []
+    for index, name in enumerate(class_names):
+        tp = confusion[index][index]
+        fp = sum(confusion[row][index] for row in range(n) if row != index)
+        fn = sum(confusion[index][col] for col in range(n) if col != index)
+        precision = tp / (tp + fp) if tp + fp else 0.0
+        recall = tp / (tp + fn) if tp + fn else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        support = sum(confusion[index])
+        per_class[name] = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+        }
+        f1s.append(f1)
+    correct = sum(confusion[i][i] for i in range(n))
+    return {
+        "accuracy": correct / len(labels) if labels else 0.0,
+        "macro_f1": sum(f1s) / len(f1s) if f1s else 0.0,
+        "per_class": per_class,
+        "confusion_matrix": confusion,
+        "class_names": class_names,
+        "support": len(labels),
+    }
+
+
 def save_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config_utils  # noqa: E402
 from dataset import TasteDataset, dedupe_records, discover_records, make_loader  # noqa: E402
 from model import POSITIVE_INDEX, eval_transform, load_model_from_checkpoint  # noqa: E402
-from utils import binary_metrics, load_json, resolve_device, save_json  # noqa: E402
+from utils import binary_metrics, load_json, multiclass_metrics, resolve_device, save_json  # noqa: E402
 
 
 def main() -> int:
@@ -44,18 +44,22 @@ def main() -> int:
 
     labels: list[int] = []
     scores: list[float] = []
+    predictions: list[int] = []
     paths: list[str] = []
     with torch.no_grad():
         for images, targets, batch_paths in loader:
             images = images.to(device, non_blocking=True)
             logits = model(images)
-            probs = torch.softmax(logits.float(), dim=1)[:, POSITIVE_INDEX]
+            probs = torch.softmax(logits.float(), dim=1)
             labels.extend(int(x) for x in targets.tolist())
-            scores.extend(float(x) for x in probs.cpu().tolist())
+            scores.extend(float(x) for x in probs[:, POSITIVE_INDEX].cpu().tolist())
+            predictions.extend(int(x) for x in probs.argmax(dim=1).cpu().tolist())
             paths.extend(batch_paths)
 
     collect_labels = [1 if label == POSITIVE_INDEX else 0 for label in labels]
+    class_names = list(checkpoint.get("class_names") or ["skip", "suspicious", "collect"])
     metrics = binary_metrics(collect_labels, scores, threshold)
+    three_class = multiclass_metrics(labels, predictions, class_names)
     false_positives = [
         {"path": path, "score": score}
         for path, label, score in zip(paths, collect_labels, scores)
@@ -66,18 +70,20 @@ def main() -> int:
         for path, label, score in zip(paths, collect_labels, scores)
         if label == 1 and score < threshold
     ]
-    class_names = list(checkpoint.get("class_names") or ["skip", "suspicious", "collect"])
     output = {
         "split": split,
         "checkpoint": str(p.checkpoint),
         "threshold": threshold,
+        "collect_metrics": metrics,
         "metrics": metrics,
+        "multiclass_metrics": three_class,
         "confusion_matrix": {
             "tn": metrics["tn"],
             "fp": metrics["fp"],
             "fn": metrics["fn"],
             "tp": metrics["tp"],
         },
+        "multiclass_confusion_matrix": three_class["confusion_matrix"],
         "false_positives": false_positives,
         "false_negatives": false_negatives,
         "dedupe": report.__dict__,
@@ -90,24 +96,29 @@ def main() -> int:
     with open(csv_path, "w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["path", "label", "score", "prediction"],
+            fieldnames=["path", "label", "prediction", "collect_score", "collect_threshold"],
             lineterminator="\n",
         )
         writer.writeheader()
-        for path, label, score in zip(paths, labels, scores):
+        for path, label, predicted, score in zip(paths, labels, predictions, scores):
             writer.writerow(
                 {
                     "path": path,
                     "label": class_names[label] if label < len(class_names) else str(label),
-                    "score": f"{score:.8f}",
-                    "prediction": "collect" if score >= threshold else "not_collect",
+                    "prediction": class_names[predicted] if predicted < len(class_names) else str(predicted),
+                    "collect_score": f"{score:.8f}",
+                    "collect_threshold": f"{threshold:.8f}",
                 }
             )
 
     print(f"split={split} threshold={threshold:.6f}")
     print(
-        f"TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']} | "
+        f"collect: TP={metrics['tp']} FP={metrics['fp']} TN={metrics['tn']} FN={metrics['fn']} | "
         f"precision={metrics['precision']:.4f} recall={metrics['recall']:.4f} f1={metrics['f1']:.4f}"
+    )
+    print(
+        f"3-class: accuracy={three_class['accuracy']:.4f} "
+        f"macro_f1={three_class['macro_f1']:.4f} | class_names={class_names}"
     )
     print(f"false positives: {len(false_positives)} (listed in {out_path})")
     print(f"false negatives: {len(false_negatives)} (listed in {out_path})")
