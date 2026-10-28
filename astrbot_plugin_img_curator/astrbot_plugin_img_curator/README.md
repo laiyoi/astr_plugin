@@ -336,7 +336,7 @@ stored_path
 - `sender_id` 是 QQ 号，`sender_name` 是昵称，`group_id` 是群号，`group_name` 是群名。
 - `status`：`saved` / `pending`；审核后 `review_label` 为 `positive` / `negative`。
 - 以 `=`、`+`、`-`、`@` 开头的昵称/群名会被加一个前导 `'`，避免 CSV 公式注入。
-- CSV 与 SQLite 权限为 `0600`，数据目录 `0700`；但**仍建议整个目录只给管理员读取**。
+- 插件不再强制修改数据目录/CSV/SQLite 权限，方便本地调试；部署时请自行限制目录访问权限。
 - 不收藏的图片不会写 CSV，也不会写发送者信息；SQLite 的 `seen` 表只保留哈希、状态、分数、耗时。
 
 ### 7.3 日志

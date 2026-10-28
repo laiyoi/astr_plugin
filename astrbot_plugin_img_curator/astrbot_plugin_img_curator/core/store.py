@@ -74,7 +74,6 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._init_schema()
         self._ensure_columns()
-        self._chmod_private()
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -138,14 +137,6 @@ class Store:
                 self._conn.execute("ALTER TABLE images ADD COLUMN source_type TEXT")
             if "frame_time" not in columns:
                 self._conn.execute("ALTER TABLE images ADD COLUMN frame_time REAL")
-
-    def _chmod_private(self) -> None:
-        for path in (self.db_path, Path(str(self.db_path) + "-wal"), Path(str(self.db_path) + "-shm")):
-            try:
-                if path.exists():
-                    os.chmod(path, 0o600)
-            except OSError:
-                pass
 
     def close(self) -> None:
         with self._lock:
@@ -357,10 +348,6 @@ class Store:
                     data[key] = _csv_safe(data[key])
                 writer.writerow(data)
         os.replace(tmp, self.csv_path)
-        try:
-            os.chmod(self.csv_path, 0o600)
-        except OSError:
-            pass
 
     def total_latency_samples(self) -> int:
         with self._lock:

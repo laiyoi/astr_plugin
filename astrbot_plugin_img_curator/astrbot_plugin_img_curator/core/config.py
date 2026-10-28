@@ -153,7 +153,3 @@ class PluginConfig:
     def ensure_directories(self) -> None:
         for path in (self.data_dir, self.save_dir, self.pending_dir, self.tmp_dir, self.forward_dir, self.model_dir):
             path.mkdir(parents=True, exist_ok=True)
-            try:
-                os.chmod(path, 0o700)
-            except OSError:
-                pass
