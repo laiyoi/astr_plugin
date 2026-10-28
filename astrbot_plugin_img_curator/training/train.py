@@ -63,16 +63,16 @@ def load_config() -> SimpleNamespace:
     section = dict(payload.get("train") or {})
     for key in ("data_root", "output_dir"):
         if key in section:
-            section[key] = str(_resolve(section[key]))
+            section[key] = _resolve(section[key])
     output_dir = Path(section.get("output_dir", _SCRIPT_DIR / "runs" / "taste_dinov2_v1"))
     checkpoint_dir = Path(section.get("checkpoint_dir", "ckpt")).expanduser()
-    section["checkpoint_dir"] = str(checkpoint_dir if checkpoint_dir.is_absolute() else output_dir / checkpoint_dir)
+    section["checkpoint_dir"] = checkpoint_dir if checkpoint_dir.is_absolute() else output_dir / checkpoint_dir
     tb_dir = section.get("tensorboard_dir")
     if tb_dir:
-        section["tensorboard_dir"] = str(_resolve(tb_dir))
+        section["tensorboard_dir"] = _resolve(tb_dir)
     resume = section.get("resume")
     if resume:
-        section["resume"] = str(_resolve(resume))
+        section["resume"] = _resolve(resume)
     return SimpleNamespace(**section)
 
 
@@ -103,7 +103,6 @@ def main() -> int:
     device = resolve_device(args.device)
     seed_everything(args.seed)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    args.checkpoint_dir = Path(args.checkpoint_dir)
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Scanning {args.data_root} ...")

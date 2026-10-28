@@ -65,7 +65,7 @@ def load_config() -> SimpleNamespace:
     section = dict(payload.get("preprocess") or {})
     for key in ("raw_root", "output_root"):
         if key in section:
-            section[key] = str(_resolve(section[key]))
+            section[key] = _resolve(section[key])
     return SimpleNamespace(**section)
 
 
