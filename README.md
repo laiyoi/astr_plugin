@@ -70,6 +70,21 @@ Pillow
 
 不要把 `training/` 复制进插件目录，也不要让插件导入 torch。
 
+## 发布 / 更新模型
+
+模型仓库（public）：https://huggingface.co/laiyoi/femboydetector
+
+一条命令，生成清洗后的发布目录、上传、远程校验一次完成：
+
+```powershell
+cd astrbot_plugin_img_curator
+python training\publish_hf.py           # 发布 / 更新
+python training\publish_hf.py --export  # 先重新导 ONNX + 校验一致性，再发布
+python training\publish_hf.py --dry-run # 只生成 training/hf_release/，不上传
+```
+
+脚本发布前会检查：产物齐全、`deploy/onnx_parity.json` 的 `allclose=true`、ONNX 不比 `best.pt` 旧、发布目录没残留本机绝对路径；任何一条不过就中止（`--force` 才能硬发）。**它不会修改仓库可见性**。细节见 [`training/README.md`](astrbot_plugin_img_curator/training/README.md) 第 13 节。
+
 ## 本地 AstrBot 调试
 
 `.vscode/` 已配置成从当前工作区的 `AstrBot/` 源码启动，而不是 Docker。

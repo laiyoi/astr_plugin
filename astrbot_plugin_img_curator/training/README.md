@@ -407,70 +407,53 @@ RGB
 - 没有实际跑过的数字不要写进最终报告；
 - 如果 ONNX Runtime 版本不同导致 logits 有微小差异，先检查预处理和输入 dtype，再考虑 atol。
 
-## 发布/更新 Hugging Face 模型
+## 13. 发布 / 更新 Hugging Face 模型
 
-模型仓库（private）：https://huggingface.co/laiyoi/femboydetector
-
-重新训练后要更新线上模型，按这个顺序跑，**每一步都要看输出**再往下走：
+一条命令搞定：`training/publish_hf.py` 已把「生成清洗后的发布目录 + 上传 + 远程校验」合并，
+原来的 `stage_hf_release.py` 删掉了，功能都在这里。
 
 ```powershell
 cd astrbot_plugin_img_curator
-
-# 1. 导出 ONNX（读 training/config.json 的 export 段）
-python training\export_onnx.py
-
-# 2. 校验 PyTorch 与 ONNX 一致；不通过就不要发布
-python training\test_onnx.py
-
-# 3. 生成清洗过的发布目录（默认 training/hf_release/）
-python training\stage_hf_release.py
-
-# 4. 上传（文件夹整体推，等于一次 commit）
-$env:HF_HUB_DISABLE_XET='1'
-hf upload laiyoi/femboydetector .\training\hf_release . --type model
+python training\publish_hf.py                 # 生成 + 上传 + 校验（最常用）
+python training\publish_hf.py --dry-run       # 只生成 training/hf_release/，不上传
+python training\publish_hf.py --export        # 先跑 export_onnx.py + test_onnx.py 再发布
+python training\publish_hf.py --readme-only   # 只更新模型卡
+python training\publish_hf.py --skip-stage    # 复用已有发布目录，只上传
+python training\publish_hf.py --out D:\hf_release   # 发布目录不可写时换个位置
 ```
 
-要点：
+脚本在发布前会自己检查，任何一条不过就中止（想看结果又硬要发才用 `--force`）：
 
-- **必须先做第 2 步**：`test_onnx.py` 输出 `allclose=true` 才能发布，否则 Ubuntu 上的 CPU 推理和训练时的 PyTorch 会不一致；
-- 第 3 步的 `stage_hf_release.py` 负责清洗：把 `model_config.json`、`evaluation_test.*`、`threshold*.json` 里的本机绝对路径改写成相对形式，只放行模型卡、`best.pt`、`taste_classifier.onnx`、`inference.py` 和指标文件；
-- 本机（Windows + 沙箱）不走 `HF_HUB_DISABLE_XET=1` 会报 `OSError: I/O error: 拒绝访问 (os error 5)`；
-- 目标仓库已存在时 `hf upload` 直接追加 commit；仓库不存在时加 `--private` 会新建一个私有仓库；
-- `training/` 目录不可写时（例如在受限沙箱里），用 `HF_RELEASE_DIR` 把发布目录指到别处：`$env:HF_RELEASE_DIR='D:\hf_release'`；
-- **不要上传**训练图片、`training/dataset/`、`training/dataset_raw/`、任何 QQ 号/群号/昵称，也不要上传 `HUGGINGFACE_HANDOFF.md`、`DEPLOY_HANDOFF.md` 这类内部交接文档——仓库里的 `README.md` 是给使用者看的模型卡。
+- `best.pt`、`taste_classifier.onnx`、`model_config.json`、`inference.py` 是否齐全；
+- `deploy/onnx_parity.json` 的 `allclose` 是不是 `true`；
+- ONNX 是否比 `best.pt` 旧（换了权重却没重新导出的典型症状）；
+- 生成后的发布目录里是否还残留本机绝对路径。
 
-只改模型卡（不动权重）时，单独推模型卡文件就够，不用重传 80MB。注意推的是 `training/hf_release/README.md`（由脚本生成的**模型卡**），不是仓库根目录这份项目 README：
+**脚本不碰仓库可见性**：不调用任何设置 private/public 的接口，上传后只读打印当前状态。
+仓库现在是 public：https://huggingface.co/laiyoi/femboydetector
 
-```powershell
-$env:HF_HUB_DISABLE_XET='1'
-hf upload laiyoi/femboydetector .\training\hf_release\README.md README.md --type model
+上传内容固定白名单，训练数据不会进去：
+
+```text
+README.md（模型卡）  best.pt  taste_classifier.onnx  model_config.json
+inference.py  threshold.json  threshold_epoch0020.json
+evaluation_test.json  evaluation_test.csv  onnx_parity.json
 ```
 
-模型卡正文由 `training/stage_hf_release.py` 里的 `MODEL_CARD` 生成，改文案要改那里再重跑第 3 步，否则下次发布会把旧卡片覆盖回去。
+不会带上 `dataset/`、原始图片/视频、QQ 号/群号/昵称，也不会带上 `HUGGINGFACE_HANDOFF.md`、
+`DEPLOY_HANDOFF.md` 这类内部交接文档。
 
-发布后确认（私有仓库必须带 token，未登录会 401，那是正常现象）：
+其他要点：
 
-```powershell
-python -c "from huggingface_hub import HfApi; a=HfApi(); i=a.repo_info('laiyoi/femboydetector'); print('private:', i.private); print(a.list_repo_files('laiyoi/femboydetector'))"
-```
-
-每次上传后都看一眼 `private:` 是不是 `True`；万一被翻成 public，改回来：
-
-```powershell
-python -c "from huggingface_hub import HfApi; HfApi().update_repo_settings('laiyoi/femboydetector', private=True)"
-```
-
-已知坑：
-
-- `hf repos move` 在本机会报 `SSL: UNEXPECTED_EOF_WHILE_READING`，改仓库名得用 `HfApi().move_repo(from_id=..., to_id=..., repo_type="model")`；
-- 训练产出的 `evaluation_test.csv` 带 UTF-8 BOM，自己写清洗脚本要用 `utf-8-sig` 读，否则路径清洗会静默失效；
-- `best.pt` 内部的 `training.args` 保留训练机路径（checkpoint 原样未改），其中不含隐私字段。
-
-更细的产物清单和字段说明见 [`astrbot_plugin_img_curator/HUGGINGFACE_HANDOFF.md`](astrbot_plugin_img_curator/HUGGINGFACE_HANDOFF.md)。
+- 换仓库：`--repo <user>/<name>` 或环境变量 `HF_REPO_ID`；仓库不存在时会新建一个 public 仓库；
+- 本机必须关 Xet，脚本内部默认 `HF_HUB_DISABLE_XET=1`，否则报 `OSError: I/O error: 拒绝访问 (os error 5)`；
+- 训练产出的 `evaluation_test.csv` 带 UTF-8 BOM，脚本用 `utf-8-sig` 读，否则路径清洗会静默失效；
+- `best.pt` 内部的 `training.args` 保留训练机路径（checkpoint 原样未改），其中没有隐私字段；
+- 改模型卡文案就改 `publish_hf.py` 里的 `MODEL_CARD`，下次发布会自动带上。
 
 ---
 
-## 13. 按文件哈希去重
+## 14. 按文件哈希去重
 
 `training/dedupe_files.py` 按 sha256 内容哈希找完全相同的文件，同一组里**保留创建日期最新的**，删掉创建时间较早的副本。默认只预览，加 `--apply` 才真删。
 
