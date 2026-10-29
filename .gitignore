@@ -24,3 +24,4 @@ AstrBot/
 /astrbot_plugin_img_curator/training/ckpt/
 astrbot_plugin_img_curator/HUGGINGFACE_HANDOFF.md
 astrbot_plugin_img_curator/DEPLOY_HANDOFF.md
+astrbot_plugin_img_curator/training/hf_release/

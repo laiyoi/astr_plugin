@@ -406,3 +406,98 @@ RGB
 - 记录 N100 上的均值/P95、峰值 RSS、模型体积；
 - 没有实际跑过的数字不要写进最终报告；
 - 如果 ONNX Runtime 版本不同导致 logits 有微小差异，先检查预处理和输入 dtype，再考虑 atol。
+
+## 发布/更新 Hugging Face 模型
+
+模型仓库（private）：https://huggingface.co/laiyoi/femboydetector
+
+重新训练后要更新线上模型，按这个顺序跑，**每一步都要看输出**再往下走：
+
+```powershell
+cd astrbot_plugin_img_curator
+
+# 1. 导出 ONNX（读 training/config.json 的 export 段）
+python training\export_onnx.py
+
+# 2. 校验 PyTorch 与 ONNX 一致；不通过就不要发布
+python training\test_onnx.py
+
+# 3. 生成清洗过的发布目录（默认 training/hf_release/）
+python training\stage_hf_release.py
+
+# 4. 上传（文件夹整体推，等于一次 commit）
+$env:HF_HUB_DISABLE_XET='1'
+hf upload laiyoi/femboydetector .\training\hf_release . --type model
+```
+
+要点：
+
+- **必须先做第 2 步**：`test_onnx.py` 输出 `allclose=true` 才能发布，否则 Ubuntu 上的 CPU 推理和训练时的 PyTorch 会不一致；
+- 第 3 步的 `stage_hf_release.py` 负责清洗：把 `model_config.json`、`evaluation_test.*`、`threshold*.json` 里的本机绝对路径改写成相对形式，只放行模型卡、`best.pt`、`taste_classifier.onnx`、`inference.py` 和指标文件；
+- 本机（Windows + 沙箱）不走 `HF_HUB_DISABLE_XET=1` 会报 `OSError: I/O error: 拒绝访问 (os error 5)`；
+- 目标仓库已存在时 `hf upload` 直接追加 commit；仓库不存在时加 `--private` 会新建一个私有仓库；
+- `training/` 目录不可写时（例如在受限沙箱里），用 `HF_RELEASE_DIR` 把发布目录指到别处：`$env:HF_RELEASE_DIR='D:\hf_release'`；
+- **不要上传**训练图片、`training/dataset/`、`training/dataset_raw/`、任何 QQ 号/群号/昵称，也不要上传 `HUGGINGFACE_HANDOFF.md`、`DEPLOY_HANDOFF.md` 这类内部交接文档——仓库里的 `README.md` 是给使用者看的模型卡。
+
+只改模型卡（不动权重）时，单独推模型卡文件就够，不用重传 80MB。注意推的是 `training/hf_release/README.md`（由脚本生成的**模型卡**），不是仓库根目录这份项目 README：
+
+```powershell
+$env:HF_HUB_DISABLE_XET='1'
+hf upload laiyoi/femboydetector .\training\hf_release\README.md README.md --type model
+```
+
+模型卡正文由 `training/stage_hf_release.py` 里的 `MODEL_CARD` 生成，改文案要改那里再重跑第 3 步，否则下次发布会把旧卡片覆盖回去。
+
+发布后确认（私有仓库必须带 token，未登录会 401，那是正常现象）：
+
+```powershell
+python -c "from huggingface_hub import HfApi; a=HfApi(); i=a.repo_info('laiyoi/femboydetector'); print('private:', i.private); print(a.list_repo_files('laiyoi/femboydetector'))"
+```
+
+每次上传后都看一眼 `private:` 是不是 `True`；万一被翻成 public，改回来：
+
+```powershell
+python -c "from huggingface_hub import HfApi; HfApi().update_repo_settings('laiyoi/femboydetector', private=True)"
+```
+
+已知坑：
+
+- `hf repos move` 在本机会报 `SSL: UNEXPECTED_EOF_WHILE_READING`，改仓库名得用 `HfApi().move_repo(from_id=..., to_id=..., repo_type="model")`；
+- 训练产出的 `evaluation_test.csv` 带 UTF-8 BOM，自己写清洗脚本要用 `utf-8-sig` 读，否则路径清洗会静默失效；
+- `best.pt` 内部的 `training.args` 保留训练机路径（checkpoint 原样未改），其中不含隐私字段。
+
+更细的产物清单和字段说明见 [`astrbot_plugin_img_curator/HUGGINGFACE_HANDOFF.md`](astrbot_plugin_img_curator/HUGGINGFACE_HANDOFF.md)。
+
+---
+
+## 13. 按文件哈希去重
+
+`training/dedupe_files.py` 按 sha256 内容哈希找完全相同的文件，同一组里**保留创建日期最新的**，删掉创建时间较早的副本。默认只预览，加 `--apply` 才真删。
+
+```powershell
+# 预览（不动文件）
+python training\dedupe_files.py D:\pics
+
+# 真正删除创建时间较早的重复文件
+python training\dedupe_files.py D:\pics --apply
+
+# 改成按修改时间判断新旧
+python training\dedupe_files.py D:\pics --by modified --apply
+
+# 不删，移动到回收目录
+python training\dedupe_files.py D:\pics --apply --trash D:\dup_backup
+
+# 只处理指定后缀，并输出 JSON 报告
+python training\dedupe_files.py D:\pics --ext .jpg .png --apply --json-out dedupe.json
+```
+
+规则：
+
+- 默认看**创建时间**：Windows 取 `st_ctime`（文件的“创建日期”），macOS 取 `st_birthtime`；Linux 没有创建时间，会退回修改时间（`st_ctime` 在 Linux 上是 inode 变更时间，不适合代表创建）；
+- 想按修改时间就去掉歧义，显式加 `--by modified`；
+- 先按文件大小分组，只有大小相同的才计算哈希，避免全盘哈希；
+- 同组内按选定的时间排序，最新的留下；时间相同按路径字典序；
+- 0 字节文件直接跳过（哈希全一样，删了没意义）；
+- 支持一次传多个目录，同一文件被重复传入只算一次；
+- `--trash` 模式下重名文件会自动加序号，不会覆盖；
+- JSON 报告记录每个被删文件的原路径、时间、保留文件、sha256 和字节数，并标注 `order_by`。
