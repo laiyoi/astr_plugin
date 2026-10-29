@@ -325,7 +325,7 @@ class ImageFetcher:
             except (UnidentifiedImageError, OSError, ValueError) as exc:
                 raise ImageFetchError("not a readable image") from exc
             if fmt not in TRAINING_FORMATS:
-                raise ImageFetchError(f"unsupported training image format {fmt or 'unknown'}")
+                raise ImageFetchError(f"unsupported image format {fmt or 'unknown'}")
             ext, mime = TRAINING_FORMATS[fmt]
             digest = await asyncio.to_thread(_sha256_file, tmp_path)
             size = tmp_path.stat().st_size
