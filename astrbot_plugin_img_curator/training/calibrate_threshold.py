@@ -9,6 +9,7 @@ The test split is never loaded here.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -24,14 +25,19 @@ from utils import binary_metrics, load_json, resolve_device, save_json  # noqa: 
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Calibrate collect threshold")
+    parser.add_argument("--ckpt", type=int, default=None, help="use ckpt/epoch_NNNN.pt")
+    cli = parser.parse_args()
     cfg = config_utils.section("calibrate")
     p = config_utils.paths()
+    checkpoint_path = config_utils.checkpoint_path(cli.ckpt)
+    tag = f"_epoch{cli.ckpt:04d}" if cli.ckpt is not None else ""
     device = resolve_device(str(cfg.device))
     records, report = dedupe_records(
         discover_records(p.data_root, max_image_pixels=int(cfg.max_image_pixels)),
         threshold=int(cfg.dedupe_threshold),
     )
-    model, checkpoint = load_model_from_checkpoint(p.checkpoint, device=device)
+    model, checkpoint = load_model_from_checkpoint(checkpoint_path, device=device)
     image_size = int(checkpoint.get("config", {}).get("image_size", 224))
     dataset = TasteDataset(records, "val", eval_transform(image_size=image_size))
     loader = make_loader(
@@ -79,13 +85,14 @@ def main() -> int:
     threshold = float(chosen["threshold"])
     report_payload = {
         "split": "val",
+        "checkpoint": str(checkpoint_path),
         "target_precision": float(cfg.target_precision),
         "threshold": threshold,
         "metrics": chosen,
         "all_candidates": len(candidates),
         "dedupe": report.__dict__,
     }
-    out_path = p.run_dir / "threshold.json"
+    out_path = p.run_dir / f"threshold{tag}.json"
     save_json(out_path, report_payload)
     print(
         f"chosen threshold={threshold:.6f} precision={chosen['precision']:.4f} "
@@ -93,7 +100,7 @@ def main() -> int:
     )
     print(f"wrote {out_path}")
 
-    if bool(cfg.update_model_config):
+    if bool(cfg.update_model_config) and cli.ckpt is None:
         config = load_json(p.model_config)
         config["threshold"] = threshold
         config["calibration"] = {
@@ -103,6 +110,8 @@ def main() -> int:
         }
         p.model_config.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"updated {p.model_config}")
+    elif cli.ckpt is not None:
+        print("epoch checkpoint calibration: model_config.json was not modified")
 
     return 0
 

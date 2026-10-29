@@ -29,6 +29,17 @@ def section(name: str) -> SimpleNamespace:
     return SimpleNamespace(**dict(load_config().get(name) or {}))
 
 
+def checkpoint_path(epoch: int | None = None) -> Path:
+    p = paths()
+    if epoch is None:
+        path = p.checkpoint
+    else:
+        path = p.checkpoint_dir / f"epoch_{int(epoch):04d}.pt"
+    if not path.is_file():
+        raise FileNotFoundError(f"checkpoint not found: {path}")
+    return path
+
+
 def paths() -> SimpleNamespace:
     cfg = load_config()
     train = dict(cfg.get("train") or {})

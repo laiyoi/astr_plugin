@@ -6,6 +6,7 @@ The threshold must come from calibration on val; this script never changes it.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -21,10 +22,21 @@ from utils import binary_metrics, load_json, multiclass_metrics, resolve_device,
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Evaluate DINOv2 classifier")
+    parser.add_argument("--ckpt", type=int, default=None, help="use ckpt/epoch_NNNN.pt")
+    cli = parser.parse_args()
     cfg = config_utils.section("evaluate")
     p = config_utils.paths()
+    checkpoint_path = config_utils.checkpoint_path(cli.ckpt)
+    tag = f"_epoch{cli.ckpt:04d}" if cli.ckpt is not None else ""
     device = resolve_device(str(cfg.device))
     threshold = float(load_json(p.model_config).get("threshold", 0.5))
+    if cli.ckpt is not None:
+        epoch_threshold = p.run_dir / f"threshold_epoch{cli.ckpt:04d}.json"
+        if epoch_threshold.is_file():
+            threshold = float(load_json(epoch_threshold)["threshold"])
+        else:
+            print(f"WARNING: {epoch_threshold.name} not found; using model_config threshold")
     split = str(cfg.split)
 
     records, report = dedupe_records(
@@ -32,7 +44,7 @@ def main() -> int:
         threshold=int(cfg.dedupe_threshold),
     )
     print("Dedupe kept:", report.kept)
-    model, checkpoint = load_model_from_checkpoint(p.checkpoint, device=device)
+    model, checkpoint = load_model_from_checkpoint(checkpoint_path, device=device)
     image_size = int(checkpoint.get("config", {}).get("image_size", 224))
     dataset = TasteDataset(records, split, eval_transform(image_size=image_size))
     loader = make_loader(
@@ -72,7 +84,7 @@ def main() -> int:
     ]
     output = {
         "split": split,
-        "checkpoint": str(p.checkpoint),
+        "checkpoint": str(checkpoint_path),
         "threshold": threshold,
         "collect_metrics": metrics,
         "metrics": metrics,
@@ -89,7 +101,7 @@ def main() -> int:
         "dedupe": report.__dict__,
         "class_names": class_names,
     }
-    out_path = p.run_dir / f"evaluation_{split}.json"
+    out_path = p.run_dir / f"evaluation_{split}{tag}.json"
     save_json(out_path, output)
 
     csv_path = out_path.with_suffix(".csv")

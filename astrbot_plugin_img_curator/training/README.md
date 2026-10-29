@@ -65,7 +65,7 @@ astrbot_plugin_img_curator/training/
     test/skip/
 ```
 
-空目录带 `.gitkeep`，可以直接保留。`dataset_raw` 是人工放素材的地方，`dataset` 是预处理产物。
+`dataset_raw` 的空目录带 `.gitkeep`，可以直接保留。`dataset` 是预处理产物，不放 `.gitkeep`，由 `preprocess.py` 自动创建。
 
 ---
 
@@ -232,6 +232,8 @@ count >= save_at_saved_count -> save
 
 ```powershell
 python training\calibrate_threshold.py
+# 指定第 20 个 epoch 的 checkpoint
+python training\calibrate_threshold.py --ckpt 20
 ```
 
 默认读取：
@@ -242,7 +244,7 @@ runs/taste_dinov2_v1/model_config.json
 training/dataset
 ```
 
-在验证集上选择 precision ≥ target 的前提下 recall 最大的阈值；结果写 `runs/taste_dinov2_v1/threshold.json`，并自动更新 `model_config.json`。**不要对 test 调阈值。**
+在验证集上选择 precision ≥ target 的前提下 recall 最大的阈值；结果写 `runs/taste_dinov2_v1/threshold.json`，并自动更新 `model_config.json`。使用 `--ckpt 20` 时读取 `ckpt/epoch_0020.pt`，结果写 `threshold_epoch0020.json`，不覆盖 `model_config.json`。**不要对 test 调阈值。**
 
 ---
 
@@ -252,7 +254,11 @@ training/dataset
 
 ```powershell
 python training\evaluate.py
+# 指定第 20 个 epoch
+python training\evaluate.py --ckpt 20
 ```
+
+使用 `--ckpt 20` 时读取 `ckpt/epoch_0020.pt`，优先使用 `threshold_epoch0020.json`；输出文件带 `_epoch0020` 后缀。
 
 输出：
 

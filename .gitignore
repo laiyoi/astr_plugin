@@ -13,9 +13,7 @@ AstrBot/
 /astrbot_plugin_img_curator/training/dataset_raw/**/*
 !/astrbot_plugin_img_curator/training/dataset_raw/**/
 !/astrbot_plugin_img_curator/training/dataset_raw/**/.gitkeep
-/astrbot_plugin_img_curator/training/dataset/**/*
-!/astrbot_plugin_img_curator/training/dataset/**/
-!/astrbot_plugin_img_curator/training/dataset/**/.gitkeep
+/astrbot_plugin_img_curator/training/dataset/
 
 # Local debug artifacts under the project folder
 /astrbot_plugin_img_curator/data/
