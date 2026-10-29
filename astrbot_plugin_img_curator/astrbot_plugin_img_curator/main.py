@@ -281,13 +281,16 @@ class Main(Star):
         if not row:
             raise FileNotFoundError("not found")
         path = Path(str(row.get("stored_path") or "")).resolve()
+        poster = Path(str(row.get("poster_path") or "")).resolve() if row.get("poster_path") else None
         root = self.cfg.data_dir.resolve()
+        if max_side is not None and poster and poster.is_file() and root in poster.parents:
+            path = poster
         if not path.is_file() or root not in path.parents:
             raise FileNotFoundError("file missing")
         if max_side is None:
-            mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+            mime = mimetypes.guess_type(path.name)[0] or str(row.get("mime") or "image/jpeg")
             data = base64.b64encode(path.read_bytes()).decode("ascii")
-            return {"data_url": f"data:{mime};base64,{data}"}
+            return {"data_url": f"data:{mime};base64,{data}", "media_type": str(row.get("source_type") or "image")}
         with Image.open(path) as im:
             im = ImageOps.exif_transpose(im).convert("RGB")
             im.thumbnail((max_side, max_side))
@@ -324,15 +327,21 @@ class Main(Star):
             # A manual skip is a negative training label, not a delete.
             # Keep the bytes in skip/ so the dataset export can include them.
             target = path
+            poster_target = None
+            poster = Path(str(row.get("poster_path") or "")) if row.get("poster_path") else None
             if has_file:
                 self.cfg.skip_dir.mkdir(parents=True, exist_ok=True)
                 target = self.cfg.skip_dir / path.name
                 if path != target:
                     shutil.move(str(path), str(target))
+                if poster and poster.is_file() and root in poster.resolve().parents:
+                    poster_target = self.cfg.skip_dir / poster.name
+                    shutil.move(str(poster), str(poster_target))
             self.store.update_review(
                 image_id, label="skip", status="rejected",
                 file_name=target.name if has_file else "",
                 stored_path=str(target) if has_file else "",
+                poster_path=str(poster_target) if poster_target else None,
             )
             return {
                 "ok": True, "id": image_id, "label": "skip", "status": "rejected",
@@ -344,9 +353,15 @@ class Main(Star):
             target = self.cfg.save_dir / path.name
             if path != target:
                 shutil.move(str(path), str(target))
+            poster = Path(str(row.get("poster_path") or "")) if row.get("poster_path") else None
+            poster_target = None
+            if poster and poster.is_file() and root in poster.resolve().parents:
+                poster_target = self.cfg.save_dir / poster.name
+                shutil.move(str(poster), str(poster_target))
             self.store.update_review(
                 image_id, label="collect", status="saved",
                 file_name=target.name, stored_path=str(target),
+                poster_path=str(poster_target) if poster_target else None,
             )
             return {"ok": True, "id": image_id, "label": "collect", "status": "saved", "moved": True}
 
@@ -443,7 +458,9 @@ class Main(Star):
         return jsonify(result)
 
     @staticmethod
-    def _readable_image(path: Path) -> bool:
+    def _readable_media(path: Path, source_type: str = "") -> bool:
+        if source_type == "video" or path.suffix.lower() in {".mp4", ".mov", ".webm", ".mkv"}:
+            return path.is_file() and path.stat().st_size > 0
         try:
             with Image.open(path) as im:
                 im.verify()
@@ -476,16 +493,20 @@ class Main(Star):
         total_bytes = 0
         root = self.cfg.data_dir.resolve()
         for row in rows:
-            path = Path(str(row.get("stored_path") or "")).resolve()
-            if not path.is_file() or root not in path.parents:
-                continue
-            try:
-                size = path.stat().st_size
-                path.unlink()
-                removed += 1
-                total_bytes += size
-            except OSError:
-                failed += 1
+            paths = [Path(str(row.get("stored_path") or ""))]
+            if row.get("poster_path"):
+                paths.append(Path(str(row["poster_path"])))
+            for raw_path in paths:
+                path = raw_path.resolve()
+                if not path.is_file() or root not in path.parents:
+                    continue
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                    removed += 1
+                    total_bytes += size
+                except OSError:
+                    failed += 1
         return removed, total_bytes, failed
 
     async def api_delete_images(self):
@@ -587,7 +608,7 @@ class Main(Star):
                     continue
                 seen.add(row["sha256"])
             path = Path(str(row.get("stored_path") or "")).resolve()
-            if not path.is_file() or root not in path.parents or not self._readable_image(path):
+            if not path.is_file() or root not in path.parents or not self._readable_media(path, str(row.get("source_type") or "")):
                 missing += 1
                 continue
             counts[label] += 1
@@ -623,7 +644,7 @@ class Main(Star):
                     continue
                 seen.add(row["sha256"])
             path = Path(str(row.get("stored_path") or "")).resolve()
-            if not path.is_file() or root not in path.parents or not self._readable_image(path):
+            if not path.is_file() or root not in path.parents or not self._readable_media(path, str(row.get("source_type") or "")):
                 missing += 1
                 continue
             selected.append((row, path, label))

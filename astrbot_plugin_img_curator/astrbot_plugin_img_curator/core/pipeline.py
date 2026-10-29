@@ -222,18 +222,13 @@ class CuratorPipeline:
             result, frame = best
             with Image.open(frame.path) as image:
                 width, height = image.size
-            await self._finalize(
+            await self._finalize_video(
                 job,
                 result=result,
-                source_path=frame.path,
-                sha256=temp.sha256,
-                ext=".jpg",
-                mime="image/jpeg",
+                temp=temp,
+                frame=frame,
                 width=width,
                 height=height,
-                source=f"video({temp.source})",
-                source_type="video_frame",
-                frame_time=round(frame.time_sec, 2),
             )
         except ImageFetchError as exc:
             self.store.incr_meta("errors")
@@ -245,6 +240,105 @@ class CuratorPipeline:
             if temp is not None:
                 temp.cleanup()
             shutil.rmtree(frames_dir, ignore_errors=True)
+
+    async def _finalize_video(
+        self,
+        job: Job,
+        *,
+        result: TasteResult,
+        temp,
+        frame,
+        width: int,
+        height: int,
+    ) -> None:
+        status = self._decision(job, result)
+        if status == "rejected":
+            self.store.mark_seen(
+                temp.sha256, status="rejected", score=result.score,
+                margin=self._margin(result), latency_ms=result.inference_ms,
+            )
+            self.logger.info(
+                "不收藏视频 sha=%s label=%s score=%.3f",
+                temp.sha256[:12], result.label, result.score,
+            )
+            return
+        if status == "pending" and self.cfg.max_pending_files > 0:
+            if self.store.count_status("pending") >= self.cfg.max_pending_files:
+                self.store.mark_seen(
+                    temp.sha256, status="rejected", score=result.score,
+                    margin=self._margin(result), latency_ms=result.inference_ms,
+                )
+                self.logger.warning("待确认目录已达上限，视频未保存")
+                return
+
+        target_dir = self.cfg.save_dir if status == "saved" else self.cfg.pending_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        image_id = str(uuid.uuid4())
+        ext = temp.ext if temp.ext in {".mp4", ".mov", ".webm", ".mkv"} else ".mp4"
+        target = target_dir / f"{image_id}{ext}"
+        poster = target_dir / f"{image_id}.poster.jpg"
+        try:
+            await asyncio.to_thread(shutil.copy2, temp.path, target)
+            try:
+                await asyncio.to_thread(sanitize_image, frame.path, poster, ".jpg")
+            except Exception:
+                poster.unlink(missing_ok=True)
+                poster = None
+            size_bytes = target.stat().st_size
+        except OSError:
+            target.unlink(missing_ok=True)
+            poster.unlink(missing_ok=True) if poster else None
+            self.store.incr_meta("errors")
+            self.logger.exception("写入视频文件失败")
+            return
+        if size_bytes > self.cfg.max_video_bytes:
+            target.unlink(missing_ok=True)
+            if poster:
+                poster.unlink(missing_ok=True)
+            self.store.incr_meta("errors")
+            self.logger.warning("视频超过体积上限，未保存")
+            return
+
+        record = {
+            "id": image_id,
+            "sha256": temp.sha256,
+            "status": status,
+            "source_type": "video",
+            "frame_time": round(frame.time_sec, 2),
+            "file_name": target.name,
+            "stored_path": str(target),
+            "poster_path": str(poster) if poster else None,
+            "source": f"video({temp.source})",
+            "mime": temp.mime,
+            "width": width,
+            "height": height,
+            "size_bytes": size_bytes,
+            "sender_id": job.sender_id,
+            "sender_name": job.sender_name,
+            "group_id": job.group_id,
+            "group_name": job.group_name,
+            "message_id": job.message_id,
+            "score": result.score,
+            "margin": self._margin(result),
+            "top_group": result.label,
+            "top_prompt": "",
+            "model": self.model.key,
+            "latency_ms": result.inference_ms,
+            "review_label": "",
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        if not self.store.record_image(record):
+            target.unlink(missing_ok=True)
+            if poster:
+                poster.unlink(missing_ok=True)
+            self.store.incr_meta("duplicates")
+            return
+        await asyncio.to_thread(self.store.export_csv)
+        self.logger.info(
+            "已%s视频 %s | label=%s | score=%.3f | %.0f ms",
+            "收藏" if status == "saved" else "转入缓存",
+            image_id, result.label, result.score, result.inference_ms,
+        )
 
     async def _classify_or_error(self, path: Path, label: str) -> TasteResult | None:
         try:

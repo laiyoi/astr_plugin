@@ -41,6 +41,7 @@ CSV_COLUMNS = [
     "created_at",
     "reviewed_at",
     "stored_path",
+    "poster_path",
 ]
 
 
@@ -105,7 +106,8 @@ class Store:
                     latency_ms REAL,
                     review_label TEXT,
                     created_at TEXT NOT NULL,
-                    reviewed_at TEXT
+                    reviewed_at TEXT,
+                    poster_path TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_images_status ON images(status);
                 CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);
@@ -161,6 +163,8 @@ class Store:
                 self._conn.execute("ALTER TABLE images ADD COLUMN source_type TEXT")
             if "frame_time" not in columns:
                 self._conn.execute("ALTER TABLE images ADD COLUMN frame_time REAL")
+            if "poster_path" not in columns:
+                self._conn.execute("ALTER TABLE images ADD COLUMN poster_path TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -244,7 +248,7 @@ class Store:
             "id", "sha256", "status", "source_type", "frame_time", "file_name", "stored_path", "source", "mime",
             "width", "height", "size_bytes", "sender_id", "sender_name", "group_id",
             "group_name", "message_id", "score", "margin", "top_group", "top_prompt",
-            "model", "latency_ms", "created_at",
+            "model", "latency_ms", "created_at", "poster_path",
         ]
         values = [record.get(c) for c in columns]
         stamp = now_iso()
@@ -296,12 +300,13 @@ class Store:
         status: str,
         file_name: str | None,
         stored_path: str | None,
+        poster_path: str | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "UPDATE images SET review_label=?, status=?, file_name=?, stored_path=?, "
-                "reviewed_at=? WHERE id=?",
-                (label, status, file_name, stored_path, now_iso(), image_id),
+                "poster_path=COALESCE(?, poster_path), reviewed_at=? WHERE id=?",
+                (label, status, file_name, stored_path, poster_path, now_iso(), image_id),
             )
             self._conn.execute("UPDATE seen SET status=? WHERE image_id=?", (status, image_id))
 

@@ -47,6 +47,8 @@ class TempVideo:
     sha256: str
     size_bytes: int
     source: str
+    ext: str = ".mp4"
+    mime: str = "video/mp4"
 
     def cleanup(self) -> None:
         try:
@@ -201,19 +203,29 @@ class ImageFetcher:
         tmp_dir.mkdir(parents=True, exist_ok=True)
         raw: bytes | None = None
         local: Path | None = None
+        source_value = ""
         for value in self._candidates(video):
             if value.startswith(("base64://", "data:")):
                 raw = _decode_base64(value, max_bytes)
+                source_value = value
                 break
             if value.startswith(("http://", "https://")):
                 raw = await self._http_bytes(value, max_bytes=max_bytes)
+                source_value = value
                 break
             candidate = _local_path(value)
             if candidate and candidate.is_file():
                 local = candidate
+                source_value = value
                 break
         if raw is None and local is None:
             raise ImageFetchError("no usable video URL, base64 payload, or local path")
+        video_ext = ".mp4"
+        video_mime = "video/mp4"
+        suffix = Path(urlparse(source_value).path).suffix.lower() if source_value else ""
+        known = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".mkv": "video/x-matroska"}
+        if suffix in known:
+            video_ext, video_mime = suffix, known[suffix]
 
         tmp_path = tmp_dir / f"{uuid.uuid4().hex}.video"
         try:
@@ -233,6 +245,8 @@ class ImageFetcher:
                 sha256=digest,
                 size_bytes=size,
                 source="http" if raw is not None else "local",
+                ext=video_ext,
+                mime=video_mime,
             )
         except Exception:
             tmp_path.unlink(missing_ok=True)
