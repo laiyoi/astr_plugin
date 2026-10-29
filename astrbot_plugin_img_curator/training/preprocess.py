@@ -160,6 +160,16 @@ def assign_splits(items: list[Item], *, val_ratio: float, test_ratio: float, see
                 item.split = split
 
 
+def _remove_stale_outputs(item: Item, output_root: Path) -> None:
+    """Remove this source from every split before writing its new split copy."""
+    if item.path.suffix.lower() in VIDEO_SUFFIXES:
+        pattern = f"{item.sha256[:12]}_*.jpg"
+    else:
+        pattern = f"{item.sha256[:16]}.jpg"
+    for path in output_root.glob(f"*/*/{pattern}"):
+        path.unlink(missing_ok=True)
+
+
 def _save_scaled(src: Path, target: Path, resize_size: int, quality: int) -> None:
     with Image.open(src) as image:
         image = ImageOps.exif_transpose(image).convert("RGB")
@@ -171,15 +181,18 @@ def _save_scaled(src: Path, target: Path, resize_size: int, quality: int) -> Non
 def preprocess_image(item: Item, output_root: Path, args: SimpleNamespace) -> Path:
     target_dir = output_root / item.split / CLASS_NAMES[item.label]
     target_dir.mkdir(parents=True, exist_ok=True)
+    _remove_stale_outputs(item, output_root)
     target = target_dir / f"{item.sha256[:16]}.jpg"
-    if not target.exists():
-        _save_scaled(item.path, target, args.resize_size, args.jpeg_quality)
+    # Always regenerate so changing resize_size/jpeg_quality does not leave a
+    # stale unscaled version behind.
+    _save_scaled(item.path, target, args.resize_size, args.jpeg_quality)
     return target
 
 
 def preprocess_video(item: Item, output_root: Path, args: SimpleNamespace) -> list[Path]:
     target_dir = output_root / item.split / CLASS_NAMES[item.label]
     target_dir.mkdir(parents=True, exist_ok=True)
+    _remove_stale_outputs(item, output_root)
     work = output_root / ".work" / item.sha256[:20]
     try:
         frames = extract_frames(
@@ -192,8 +205,7 @@ def preprocess_video(item: Item, output_root: Path, args: SimpleNamespace) -> li
         outputs: list[Path] = []
         for index, frame in enumerate(frames):
             target = target_dir / f"{item.sha256[:12]}_{index:03d}_{frame.time_sec:06.2f}.jpg"
-            if not target.exists():
-                _save_scaled(frame.path, target, args.resize_size, args.jpeg_quality)
+            _save_scaled(frame.path, target, args.resize_size, args.jpeg_quality)
             outputs.append(target)
         return outputs
     finally:

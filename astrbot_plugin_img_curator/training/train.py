@@ -173,7 +173,7 @@ def main() -> int:
         print(f"Resumed weights from {args.resume}, starting at epoch {start_epoch}")
 
     writer = None
-    tb_dir = args.tensorboard_dir or (args.output_dir / "tensorboard")
+    tb_dir = args.tensorboard_dir or args.checkpoint_dir
     if args.tensorboard:
         if SummaryWriter is None:
             print("tensorboard is not installed; continuing without TensorBoard. pip install tensorboard")

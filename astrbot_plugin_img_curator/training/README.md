@@ -102,6 +102,8 @@ python training\preprocess.py
 - 图片/GIF：先缩放再保存为 JPEG（默认最长边 256，质量 95），GIF 只取首帧用于训练；
 - 视频：`core.video.extract_frames()` 抽帧，帧同样缩放为 256 内的 JPEG；
 - 同一视频的所有帧分到同一个 split，避免泄漏；
+- 重新预处理时会先删除该源文件在旧 split/class 下的副本，再写到新 split；
+- 如果视频换过编码/字节不同，旧副本不会被识别为同一源，建议改 `clean: true` 全量重建；
 - 按 `collect` / `suspicious` / `skip` 分层划分 train/val/test，默认 70/15/15；
 - 输出 `training/dataset/preprocess_report.json`；
 - `clean: true` 会先删除整个输出目录，慎用；
@@ -140,16 +142,16 @@ python training\train.py
 - 超大/损坏图片在扫描阶段会跳过，不会进入 DataLoader；
 - Windows 如果仍报 `MemoryError`，先把 `num_workers` 改成 `0`，并把 `max_image_pixels` 降到 `20000000`。
 
-TensorBoard 默认开启，日志写到：
+TensorBoard 默认开启，事件文件直接写到 checkpoint 目录：
 
 ```text
-<output-dir>\tensorboard
+<output-dir>/ckpt/
 ```
 
 启动：
 
 ```powershell
-tensorboard --logdir D:\runs\taste_dinov2_v1\tensorboard
+tensorboard --logdir D:\runs\taste_dinov2_v1\ckpt
 ```
 
 需要关闭时把配置里的 `tensorboard` 改为 `false`，或设置 `tensorboard_dir`。
