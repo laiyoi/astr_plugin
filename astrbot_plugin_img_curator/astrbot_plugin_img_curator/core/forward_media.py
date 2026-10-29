@@ -66,6 +66,7 @@ class ForwardMediaExtractor:
         self.logger = logger
         self.max_depth = max_depth
         self._seen_forwards: set[str] = set()
+        self._message_sender_cache: dict[str, tuple[str, str]] = {}
 
     async def from_event(self, event) -> list[MediaRef]:
         refs: list[MediaRef] = []
@@ -104,6 +105,11 @@ class ForwardMediaExtractor:
             if parsed is not None:
                 await self._walk_payload(parsed, out, depth + 1, sender_id, sender_name, message_id)
         elif isinstance(component, Forward):
+            embedded = getattr(component, "content", None)
+            if isinstance(embedded, list) and embedded:
+                for child in embedded:
+                    await self._walk_astrbot(child, out, depth + 1, sender_id, sender_name, message_id)
+                return
             payload = await self._fetch_forward(component.id)
             await self._walk_payload(payload, out, depth + 1, sender_id, sender_name, message_id)
 
@@ -126,6 +132,8 @@ class ForwardMediaExtractor:
             return
 
         node_id, node_name = _sender(payload, sender_id, sender_name)
+        if node_id in {"", "1094950020"}:
+            node_id, node_name = await self._resolve_message_sender(payload, node_id, node_name)
         if isinstance(payload.get("message"), list):
             for item in payload["message"]:
                 await self._walk_payload(item, out, depth + 1, node_id, node_name, message_id)
@@ -172,6 +180,8 @@ class ForwardMediaExtractor:
             node_id2, node_name2 = _sender(
                 data if data else payload, node_id, node_name
             )
+            if node_id2 in {"", "1094950020"}:
+                node_id2, node_name2 = await self._resolve_message_sender(data, node_id2, node_name2)
             content = data.get("content") or data.get("messages") or data.get("message") or []
             if isinstance(content, dict):
                 content = content.get("message") or content.get("content") or content.get("messages") or []
@@ -194,6 +204,32 @@ class ForwardMediaExtractor:
             parsed = _load_json(data)
             if parsed is not None:
                 await self._walk_payload(parsed, out, depth + 1, node_id, node_name, message_id)
+
+    async def _resolve_message_sender(
+        self, payload: dict[str, Any], fallback_id: str, fallback_name: str
+    ) -> tuple[str, str]:
+        """Ask OneBot for the original message when a forward node is anonymous."""
+        mid = payload.get("message_id") or payload.get("real_id")
+        if not mid or self.bot is None:
+            return fallback_id, fallback_name
+        key = str(mid)
+        if key in self._message_sender_cache:
+            return self._message_sender_cache[key]
+        resolved = (fallback_id, fallback_name)
+        try:
+            response = await self.bot.call_action("get_msg", message_id=key)
+            data = response.get("data") if isinstance(response, dict) else None
+            source = data if isinstance(data, dict) else response
+            if isinstance(source, dict):
+                sender = source.get("sender") if isinstance(source.get("sender"), dict) else {}
+                uid = str(sender.get("user_id") or source.get("user_id") or "")
+                name = str(sender.get("card") or sender.get("nickname") or source.get("nickname") or "")
+                if uid and uid != "1094950020":
+                    resolved = (uid, name or fallback_name)
+        except Exception:
+            pass
+        self._message_sender_cache[key] = resolved
+        return resolved
 
     async def _fetch_forward(self, forward_id: Any) -> list[Any]:
         fid = str(forward_id or "")

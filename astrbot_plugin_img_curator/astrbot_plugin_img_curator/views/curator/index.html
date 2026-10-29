@@ -94,7 +94,7 @@ a{color:var(--accent);text-decoration:none}
 th{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap}td{font-size:13px}
 tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
 .rank{font-variant-numeric:tabular-nums;color:var(--muted);width:46px}.rank.top{color:var(--amber);font-weight:700}
-.user-cell{display:flex;flex-direction:column;min-width:130px}.user-cell small{color:var(--faint);font-size:11px}
+.user-cell{display:flex;flex-direction:row;gap:8px;align-items:center;min-width:160px}.user-cell small{color:var(--faint);font-size:11px}.user-line{display:flex;flex-direction:column;min-width:0}.avatar{width:30px;height:30px;border-radius:50%;position:relative;flex:none;background:var(--panel2);border:1px solid var(--line2);display:grid;place-items:center;overflow:hidden;color:var(--muted);font-size:12px}.avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .num{font-variant-numeric:tabular-nums;white-space:nowrap}.secondary{color:var(--muted);font-size:11px}
 .rank-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px}.rank-tabs button{padding:10px 14px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}.rank-tabs button.active{color:var(--text);border-color:var(--accent);font-weight:650}
 .hint{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 13px;color:var(--muted);font-size:12px;line-height:1.7;margin-bottom:15px}
@@ -161,6 +161,7 @@ tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
         <div class="toolbar">
           <input class="input" id="rankSearch" placeholder="搜索用户 / QQ" style="min-width:200px">
           <select id="rankRange"><option value="0">全部时间</option><option value="30">最近 30 天</option><option value="7">最近 7 天</option></select>
+          <button class="btn sm" id="resolveNames" title="通过 OneBot get_stranger_info 补全 QQ 昵称">补全未知昵称</button>
           <span id="kingFilters" style="display:none;gap:8px;align-items:center">
             <label class="secondary">置信度阈值</label><input class="input" id="rankThreshold" type="number" value="0.6" min="0" max="1" step="0.05" style="width:86px">
             <label class="secondary">最低有效样本</label><input class="input" id="rankMin" type="number" value="2" min="0" step="1" style="width:72px">
@@ -180,7 +181,7 @@ tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
             <input class="input" id="aliasSearch" placeholder="搜索昵称 / QQ" style="margin-left:auto;width:200px">
           </div>
         </div>
-        <div class="card-panel table-wrap" style="padding:4px 14px"><table><thead><tr><th>昵称</th><th>QQ 映射</th><th>图片数</th><th>未补全</th><th>最近</th><th>操作</th></tr></thead><tbody id="aliasBody"><tr><td colspan="6"><div class="empty">加载中…</div></td></tr></tbody></table></div>
+        <div class="card-panel table-wrap" style="padding:4px 14px"><table><thead><tr><th>昵称</th><th>QQ 映射</th><th>图片数</th><th>未补全</th><th>所在群 / 群昵称</th><th>最近</th><th>操作</th></tr></thead><tbody id="aliasBody"><tr><td colspan="7"><div class="empty">加载中…</div></td></tr></tbody></table></div>
       </section>
       <section id="page-export" style="display:none">
         <div class="export-grid">
@@ -203,7 +204,7 @@ tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
     </main>
   </div>
 </div>
-<div class="batchbar" id="batchbar"><b id="batchCount">已选择 0 张</b><button class="btn sm" data-batch="collect">设为 collect</button><button class="btn sm" data-batch="suspicious">设为 suspicious</button><button class="btn sm danger" data-batch="skip">设为 skip</button><button class="btn sm ghost" id="clearSelection">清空选择</button></div>
+<div class="batchbar" id="batchbar"><b id="batchCount">已选择 0 张</b><button class="btn sm" data-batch="collect">设为 collect</button><button class="btn sm" data-batch="suspicious">设为 suspicious</button><button class="btn sm danger" data-batch="skip">设为 skip</button><button class="btn sm" id="batchSender">指定发送者</button><button class="btn sm ghost" id="clearSelection">清空选择</button></div>
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">确认</h3><button class="btn ghost" data-close="modal">✕</button></div><div class="modal-body" id="modalBody"></div><div class="modal-foot" id="modalFoot"></div></div></div>
 <div class="review" id="review"><div class="review-top"><button class="btn sm" id="closeReview">退出审核</button><span id="reviewProgress"></span><span class="review-meta" id="reviewMeta"></span></div><div class="review-stage"><img id="reviewImg" alt=""></div><div class="review-foot"><button class="btn" data-review-label="collect">1 · collect</button><button class="btn" data-review-label="suspicious">2 · suspicious</button><button class="btn danger" data-review-label="skip">3 · skip</button><span class="review-hint">← → 切换 · Esc 退出</span></div></div>
@@ -316,7 +317,7 @@ async function fetchRanking(append=false){
 }
 function renderRanking(total){
  const isKing=S.rankingBoard==='king';$('rankHead').innerHTML=isKing?'<tr><th>排名</th><th>用户</th><th>有效 collect</th><th>有效样本</th><th>高置信数</th><th>高置信占比</th><th>平均置信度</th><th>最高</th><th>最近</th></tr>':'<tr><th>排名</th><th>用户</th><th>有效 collect</th><th>最近一次有效收集</th></tr>';
- $('rankBody').innerHTML=S.rankRows.length?S.rankRows.map((r,i)=>{const rank=(appendBase=i+1);const top=i<3?' top':'';return `<tr class="clickable" data-user="${esc(r.sender_id||'')}" data-name="${esc(r.sender_name||'')}"><td class="rank${top}">${r.rank||(i+1)}</td><td><div class="user-cell"><span>${esc(r.sender_name||'未知用户')}</span><small>${r.sender_id?('QQ '+esc(r.sender_id)):'QQ 未记录'}</small></div></td>${isKing?`<td class="num">${r.collect_count}</td><td class="num">${r.confidence_samples}</td><td class="num">${r.high_count}</td><td class="num">${(r.high_ratio*100).toFixed(1)}%</td><td class="num">${r.avg_score==null?'—':Number(r.avg_score).toFixed(3)}</td><td class="num">${r.max_score==null?'—':Number(r.max_score).toFixed(3)}</td><td class="secondary">${fmtDate(r.last_at)}</td>`:`<td class="num">${r.collect_count}</td><td class="secondary">${fmtDate(r.last_at)}</td>`}</tr>`}).join(''):'<tr><td colspan="9"><div class="empty">暂无符合条件的用户</div></td></tr>';
+ $('rankBody').innerHTML=S.rankRows.length?S.rankRows.map((r,i)=>{const top=i<3?' top':'';return `<tr class="clickable" data-user="${esc(r.sender_id||'')}" data-name="${esc(r.sender_name||'')}"><td class="rank${top}">${r.rank||(i+1)}</td><td><div class="user-cell"><span class="avatar"><span>${esc((r.sender_name||'?').slice(0,1))}</span>${r.avatar_url?`<img src="${esc(r.avatar_url)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'">`:''}</span><span class="user-line"><span>${esc(r.sender_name||'未知用户')}</span><small>${r.sender_id?('QQ '+esc(r.sender_id)):'QQ 未记录'}</small></span></div></td>${isKing?`<td class="num">${r.collect_count}</td><td class="num">${r.confidence_samples}</td><td class="num">${r.high_count}</td><td class="num">${(r.high_ratio*100).toFixed(1)}%</td><td class="num">${r.avg_score==null?'—':Number(r.avg_score).toFixed(3)}</td><td class="num">${r.max_score==null?'—':Number(r.max_score).toFixed(3)}</td><td class="secondary">${fmtDate(r.last_at)}</td>`:`<td class="num">${r.collect_count}</td><td class="secondary">${fmtDate(r.last_at)}</td>`}</tr>`}).join(''):'<tr><td colspan="9"><div class="empty">暂无符合条件的用户</div></td></tr>';
 }
 // export
 function exportLabelRows(counts){$('exportLabels').innerHTML=['collect','suspicious','skip'].map(l=>`<label class="checkline"><input type="checkbox" data-export-label="${l}" ${S.exportLabels.has(l)?'checked':''}>${l} <span class="secondary">(${counts?.[l]??'—'})</span></label>`).join('')}
@@ -329,11 +330,11 @@ async function doExport(){const labels=[...S.exportLabels];if(!labels.length){to
 // aliases
 let aliasCache=[];
 async function loadAliases(){
- try{const d=await apiGet('curator/aliases');S.aliasItems=d.items||[];S.aliasKnown=d.aliases||[];renderAliases()}catch(e){$('aliasBody').innerHTML=`<tr><td colspan="6"><div class="empty">加载失败：${esc(e.message)}</div></td></tr>`}
+ try{const d=await apiGet('curator/aliases');S.aliasItems=d.items||[];S.aliasKnown=d.aliases||[];renderAliases()}catch(e){$('aliasBody').innerHTML=`<tr><td colspan="7"><div class="empty">加载失败：${esc(e.message)}</div></td></tr>`}
 }
 function renderAliases(){
  const q=$('aliasSearch').value.trim().toLowerCase();const items=S.aliasItems.filter(x=>!q||String(x.nickname).toLowerCase().includes(q)||String(x.mapped_id||'').includes(q));
- $('aliasBody').innerHTML=items.length?items.map(x=>`<tr><td><div class="user-cell"><span>${esc(x.nickname)}</span><small>${x.last_at?fmtDate(x.last_at):''}</small></div></td><td><input class="input" data-alias-input="${esc(x.nickname)}" value="${esc(x.mapped_id||'')}" placeholder="输入 QQ" inputmode="numeric" style="width:150px"></td><td class="num">${x.total}</td><td class="num">${x.unknown||0}</td><td class="secondary">${fmtDate(x.last_at)}</td><td><button class="btn sm primary" data-alias-save="${esc(x.nickname)}">保存</button></td></tr>`).join(''):'<tr><td colspan="6"><div class="empty">没有需要补全的昵称</div></td></tr>';
+ $('aliasBody').innerHTML=items.length?items.map(x=>{const groups=(x.groups||[]).map(g=>`${esc(g.group_name||g.group_id)}${g.card?' · '+esc(g.card):''}`).join('<br>')||'—';return `<tr><td><div class="user-cell"><span>${esc(x.nickname)}</span><small>${x.last_at?fmtDate(x.last_at):''}</small></div></td><td><input class="input" data-alias-input="${esc(x.nickname)}" value="${esc(x.mapped_id||'')}" placeholder="输入 QQ" inputmode="numeric" style="width:150px"></td><td class="num">${x.total}</td><td class="num">${x.unknown||0}</td><td class="secondary">${groups}</td><td class="secondary">${fmtDate(x.last_at)}</td><td><button class="btn sm primary" data-alias-save="${esc(x.nickname)}">保存</button></td></tr>`}).join(''):'<tr><td colspan="7"><div class="empty">没有需要补全的昵称</div></td></tr>';
 }
 async function saveAlias(nickname,qq){
  qq=String(qq||'').trim();if(!/^[0-9]{5,20}$/.test(qq)){toast('QQ 必须是 5-20 位数字','err');return}
@@ -342,6 +343,18 @@ async function saveAlias(nickname,qq){
 $('aliasSaveBtn').onclick=()=>saveAlias($('aliasName').value.trim(),$('aliasQQ').value.trim());
 $('aliasSearch').addEventListener('input',renderAliases);
 $('aliasBody').addEventListener('click',e=>{const b=e.target.closest('[data-alias-save]');if(!b)return;const n=b.dataset.aliasSave;const input=document.querySelector(`[data-alias-input="${CSS.escape(n)}"]`);saveAlias(n,input?.value||'')});
+function openSenderDialog(){
+ if(!S.selected.size){toast('请先选择图片','err');return}
+ const count=S.selected.size;
+ modal('指定发送者',`<div class="hint">将选中的 <b>${count}</b> 张图片归属到指定 QQ 和昵称。适用于 NapCat 返回“QQ用户”而无法识别发送者的图片。</div><div class="field"><label>QQ 号</label><input class="input" id="senderQQ" inputmode="numeric" placeholder="5-20 位数字"></div><div class="field"><label>昵称 / 群昵称</label><input class="input" id="senderNickname" placeholder="用于显示和导出"></div>`,'<button class="btn" data-close="modal">取消</button><button class="btn primary" id="senderSave">保存</button>');
+ $('modal').querySelectorAll('[data-close="modal"]').forEach(b=>b.onclick=closeModal);
+ $('senderSave').onclick=async()=>{
+  const uid=$('senderQQ').value.trim(), name=$('senderNickname').value.trim();
+  if(!/^[0-9]{5,20}$/.test(uid)||!name){toast('请填写 5-20 位 QQ 和昵称','err');return}
+  const ids=[...S.selected];$('senderSave').disabled=true;$('senderSave').textContent='保存中…';
+  try{const r=await apiPost('curator/sender',{ids,sender_id:uid,sender_name:name});ids.forEach(id=>S.selected.delete(id));closeModal();toast(`已更新 ${r.updated}/${r.total} 张图片`,'ok');await loadImages()}catch(e){toast('保存失败：'+e.message,'err');$('senderSave').disabled=false;$('senderSave').textContent='保存'}
+ };
+}
 // events
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{location.hash=b.dataset.route;$('sidebar').classList.remove('open')});
 $('menuBtn').onclick=()=>$('sidebar').classList.toggle('open');
@@ -356,12 +369,13 @@ $('grid').addEventListener('click',e=>{const sel=e.target.closest('[data-select]
 function jumpPage(){const input=$('jumpPage');if(!input)return;const pages=Math.max(1,Math.ceil(S.total/S.limit));const page=Math.max(1,Math.min(pages,Number(input.value)||1));S.offset=(page-1)*S.limit;loadImages();window.scrollTo({top:0,behavior:'smooth'})}
 $('pager').addEventListener('click',e=>{if(e.target.id==='jumpBtn'){jumpPage();return}const b=e.target.closest('[data-page]');if(!b||b.disabled)return;S.offset=(Number(b.dataset.page)-1)*S.limit;loadImages();window.scrollTo({top:0,behavior:'smooth'})});
 $('pager').addEventListener('keydown',e=>{if(e.target.id==='jumpPage'&&e.key==='Enter')jumpPage()});
-$('batchbar').addEventListener('click',e=>{const b=e.target.closest('[data-batch]');if(b)batchSet(b.dataset.batch);if(e.target.id==='clearSelection'){S.selected.clear();updateBatchbar()}});
+$('batchbar').addEventListener('click',e=>{if(e.target.id==='batchSender'){openSenderDialog();return}const b=e.target.closest('[data-batch]');if(b)batchSet(b.dataset.batch);if(e.target.id==='clearSelection'){S.selected.clear();updateBatchbar()}});
 $('selectPage').onclick=()=>{S.items.forEach(it=>S.selected.add(it.id));updateBatchbar()};
 $('reviewBtn').onclick=startReview;$('closeReview').onclick=closeReview;$('review').addEventListener('click',e=>{const b=e.target.closest('[data-review-label]');if(b)reviewSet(b.dataset.reviewLabel)});
 document.addEventListener('keydown',e=>{if($('review').classList.contains('show')){if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))return;if(e.key==='Escape'){closeReview()}else if(e.key==='1'){reviewSet('collect')}else if(e.key==='2'){reviewSet('suspicious')}else if(e.key==='3'){reviewSet('skip')}else if(e.key==='ArrowLeft'){S.reviewIdx=Math.max(0,S.reviewIdx-1);renderReview()}else if(e.key==='ArrowRight'){S.reviewIdx=Math.min(S.items.length-1,S.reviewIdx+1);renderReview()}e.preventDefault();return}if(e.key==='Escape'){closeModal();$('sidebar').classList.remove('open')}});
 document.querySelectorAll('.rank-tabs button').forEach(b=>b.onclick=()=>{S.rankingBoard=b.dataset.board;document.querySelectorAll('.rank-tabs button').forEach(x=>x.classList.toggle('active',x===b));loadRanking()});
 $('rankSearch').addEventListener('input',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(loadRanking,300)}})());
+$('resolveNames').onclick=async()=>{const b=$('resolveNames');b.disabled=true;const old=b.textContent;b.textContent='查询中…';try{const r=await apiPost('curator/resolve_names',{});toast(`昵称补全完成：${r.resolved.length} 个用户，更新 ${r.updated} 张图片${r.failed.length?`，失败 ${r.failed.length}`:''}`,r.failed.length?'err':'ok');await loadRanking()}catch(e){toast('查询失败：'+e.message,'err')}finally{b.disabled=false;b.textContent=old}};
 ['rankRange','rankSort','rankThreshold','rankMin'].forEach(id=>$(id).addEventListener('change',loadRanking));
 $('rankBody').addEventListener('click',e=>{const tr=e.target.closest('tr[data-user]');if(!tr)return;const key=tr.dataset.user||tr.dataset.name||'';location.hash='#images?user='+encodeURIComponent(key)+'&label=collect'});
 $('exportLabels').addEventListener('change',e=>{const cb=e.target.closest('[data-export-label]');if(!cb)return;cb.checked?S.exportLabels.add(cb.dataset.exportLabel):S.exportLabels.delete(cb.dataset.exportLabel);refreshSummary()});

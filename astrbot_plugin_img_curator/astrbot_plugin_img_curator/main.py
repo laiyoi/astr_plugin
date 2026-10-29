@@ -33,7 +33,6 @@ from .core.store import Store
 
 PLUGIN_NAME = "astrbot_plugin_img_curator"
 PLUGIN_VERSION = "2.0.0"
-FALLBACK_SENDER_ID = "1094950020"
 
 
 class GroupRateLimiter:
@@ -71,6 +70,7 @@ class Main(Star):
         self.rate_limiter = GroupRateLimiter(self.cfg.rate_limit_count, self.cfg.rate_limit_window_sec)
         self._group_cache: dict[str, tuple[float, str]] = {}
         self._warm_task: asyncio.Task | None = None
+        self._stopping = False
         self.logger.info(
             "插件已初始化: %s | 保存目录 %s | 模型 %s",
             PLUGIN_VERSION,
@@ -87,6 +87,7 @@ class Main(Star):
             self.logger.info("识别未启用，不加载模型")
 
     async def terminate(self) -> None:
+        self._stopping = True
         if self._warm_task:
             self._warm_task.cancel()
             try:
@@ -95,6 +96,12 @@ class Main(Star):
                 pass
             self._warm_task = None
         await self.pipeline.stop()
+        # AstrBot may still have an in-flight listener from the about-to-be
+        # replaced instance.  Do not close SQLite underneath it immediately.
+        asyncio.create_task(self._close_store_later(), name="img-curator-close-store")
+
+    async def _close_store_later(self) -> None:
+        await asyncio.sleep(60)
         self.store.close()
 
     async def _warm_model(self) -> None:
@@ -108,6 +115,8 @@ class Main(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def on_group_image(self, event: AstrMessageEvent) -> None:
+        if self._stopping:
+            return
         if not self.cfg.enabled or _looks_like_our_command(event.message_str):
             return
         if event.get_self_id() and event.get_sender_id() == event.get_self_id():
@@ -116,11 +125,14 @@ class Main(Star):
         if not group_id:
             return
         group_name = await self._resolve_group_name(event, group_id)
+        self._record_group_member(event, group_id, group_name)
         await self._enqueue_event_media(event, group_id, group_name, private=False)
 
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def on_private_message(self, event: AstrMessageEvent) -> None:
+        if self._stopping:
+            return
         if not self.cfg.enabled or _looks_like_our_command(event.message_str):
             return
         if event.get_self_id() and event.get_sender_id() == event.get_self_id():
@@ -146,20 +158,21 @@ class Main(Star):
             except Exception:
                 self.logger.exception("解析合并聊天记录失败")
         items = [(component, kind, event.get_sender_id(), event.get_sender_name()) for component, kind in direct]
-        if direct and event.get_sender_name():
+        if direct and event.get_sender_name() and not self._stopping:
             fixed = self.store.backfill_sender_by_name(
                 str(event.get_sender_name() or ""), str(event.get_sender_id() or "")
             )
             if fixed:
                 self.logger.info("按昵称补全历史合并记录 QQ: %s -> %s（%d 条）", event.get_sender_name(), event.get_sender_id(), fixed)
-        items += [
-            (
-                ref.component, ref.media_type,
-                "" if ref.sender_id == FALLBACK_SENDER_ID else (ref.sender_id or event.get_sender_id()),
-                ref.sender_name or event.get_sender_name(),
-            )
-            for ref in refs
-        ]
+        forward_items = []
+        for ref in refs:
+            name = ref.sender_name or event.get_sender_name()
+            uid = ref.sender_id or event.get_sender_id()
+            alias = self.store.sender_id_for_alias(name) if name else ""
+            if alias and (not uid or uid == "1094950020"):
+                uid = alias
+            forward_items.append((ref.component, ref.media_type, uid, name))
+        items += forward_items
         if not items:
             return
         # One token per incoming message, not per media.  A single merged
@@ -190,6 +203,8 @@ class Main(Star):
             ("curator/thumb/<image_id>", self.api_thumb, ["GET"]),
             ("curator/label", self.api_label, ["POST"]),
             ("curator/labels/batch", self.api_batch_label, ["POST"]),
+            ("curator/sender", self.api_set_sender, ["POST"]),
+            ("curator/resolve_names", self.api_resolve_names, ["POST"]),
             ("curator/users", self.api_users, ["GET"]),
             ("curator/ranking", self.api_ranking, ["GET"]),
             ("curator/aliases", self.api_aliases, ["GET"]),
@@ -378,6 +393,24 @@ class Main(Star):
                 failed.append({"id": image_id, "error": str(exc)})
         return jsonify({"ok": ok, "failed": failed, "total": len(ids), "label": label})
 
+    async def api_set_sender(self):
+        body = await request.get_json() or {}
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"error": "ids must be a non-empty array"}), 400
+        if len(ids) > 500:
+            return jsonify({"error": "最多一次修改 500 张图片"}), 400
+        try:
+            updated = await asyncio.to_thread(
+                self.store.set_sender_for_images,
+                [str(item) for item in ids],
+                str(body.get("sender_id", "")),
+                str(body.get("sender_name", "")),
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"ok": True, "updated": updated, "total": len(ids)})
+
     async def api_users(self):
         """Backward-compatible endpoint: collect-only ranking."""
         return jsonify(self.store.ranking(limit=50, min_samples=1))
@@ -396,6 +429,11 @@ class Main(Star):
             threshold=threshold, range_days=range_days, min_samples=min_samples,
             sort=sort, q=request.args.get("q", ""), limit=limit, offset=offset,
         )
+        for item in result.get("items", []):
+            uid = str(item.get("sender_id") or "")
+            item["avatar_url"] = (
+                f"https://q1.qlogo.cn/g?b=qq&nk={uid}&s=100" if uid.isdigit() and len(uid) >= 5 else ""
+            )
         result.update({
             "range_days": range_days, "sort": sort, "limit": limit, "offset": offset,
             "legacy_unknown": self.store.legacy_unknown_senders(),
@@ -416,6 +454,52 @@ class Main(Star):
         raw = request.args.get("labels", "collect,suspicious,skip")
         allowed = {"collect", "suspicious", "skip"}
         return [item for item in raw.split(",") if item in allowed]
+
+    def _onebot_client(self):
+        manager = getattr(self.context, "platform_manager", None)
+        for platform in getattr(manager, "platform_insts", []) or []:
+            bot = getattr(platform, "bot", None)
+            if bot is None and hasattr(platform, "get_client"):
+                try:
+                    bot = platform.get_client()
+                except Exception:
+                    bot = None
+            if bot is not None and hasattr(bot, "call_action"):
+                return bot
+        return None
+
+    async def api_resolve_names(self):
+        bot = self._onebot_client()
+        if bot is None:
+            return jsonify({"error": "没有可用的 OneBot 适配器"}), 503
+        users = self.store.users_missing_nickname()
+        resolved = []
+        failed = []
+        updated = 0
+        for uid in users:
+            if not uid.isdigit():
+                continue
+            try:
+                response = await asyncio.wait_for(
+                    bot.call_action("get_stranger_info", user_id=int(uid), no_cache=False),
+                    timeout=10,
+                )
+                data = response.get("data") if isinstance(response, dict) else None
+                info = data if isinstance(data, dict) else response
+                nickname = ""
+                if isinstance(info, dict):
+                    nickname = str(info.get("nick") or info.get("nickname") or info.get("card") or "").strip()
+                if not nickname:
+                    failed.append({"sender_id": uid, "error": "empty nickname"})
+                    continue
+                n = self.store.set_sender_nickname(uid, nickname)
+                if nickname not in {"QQ用户", "未知用户"}:
+                    n += self.store.set_sender_alias(nickname, uid)
+                updated += n
+                resolved.append({"sender_id": uid, "nickname": nickname, "updated": n})
+            except Exception as exc:  # noqa: BLE001
+                failed.append({"sender_id": uid, "error": str(exc)})
+        return jsonify({"ok": True, "resolved": resolved, "failed": failed, "updated": updated})
 
     async def api_aliases(self):
         return jsonify(self.store.list_sender_aliases())
@@ -532,6 +616,27 @@ class Main(Star):
     async def _cleanup_export(path: Path) -> None:
         await asyncio.sleep(600)
         path.unlink(missing_ok=True)
+
+    def _record_group_member(self, event: AstrMessageEvent, group_id: str, group_name: str) -> None:
+        sender_id = str(event.get_sender_id() or "")
+        raw = getattr(event.message_obj, "raw_message", None)
+        raw_sender = raw.get("sender") if hasattr(raw, "get") else None
+        if not isinstance(raw_sender, dict):
+            raw_sender = {}
+        nickname = str(raw_sender.get("nickname") or event.get_sender_name() or "")
+        card = str(raw_sender.get("card") or "")
+        raw_group = raw.get("group_name") if hasattr(raw, "get") else ""
+        try:
+            self.store.record_group_member(
+                sender_id=sender_id,
+                group_id=group_id,
+                group_name=group_name or str(raw_group or ""),
+                nickname=nickname,
+                card=card,
+            )
+        except Exception:
+            if not self._stopping:
+                self.logger.exception("保存群成员信息失败")
 
     async def _resolve_group_name(self, event: AstrMessageEvent, group_id: str) -> str:
         now = time.monotonic()

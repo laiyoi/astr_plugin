@@ -133,6 +133,23 @@ class Store:
                     sender_id TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS group_members (
+                    sender_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL,
+                    group_name TEXT,
+                    nickname TEXT,
+                    card TEXT,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    PRIMARY KEY (sender_id, group_id)
+                );
+                INSERT OR IGNORE INTO group_members
+                    (sender_id, group_id, group_name, nickname, card, first_seen, last_seen)
+                SELECT sender_id, group_id, COALESCE(group_name,''), '', sender_name,
+                       MIN(created_at), MAX(created_at)
+                FROM images
+                WHERE sender_id NOT IN ('', '1094950020') AND group_id <> ''
+                GROUP BY sender_id, group_id;
                 """
             )
 
@@ -353,6 +370,76 @@ class Store:
             )
         return cur.rowcount > 0
 
+    def set_sender_for_images(self, ids: list[str], sender_id: str, sender_name: str) -> int:
+        """Manually attribute selected images to a concrete QQ/nickname."""
+        uid = (sender_id or "").strip()
+        name = (sender_name or "").strip()
+        if not uid.isdigit() or not (5 <= len(uid) <= 20):
+            raise ValueError("QQ 必须是 5-20 位数字")
+        if not name:
+            raise ValueError("昵称不能为空")
+        if not ids:
+            return 0
+        if len(ids) > 500:
+            raise ValueError("最多一次修改 500 张图片")
+        updated = 0
+        with self._lock:
+            for image_id in ids:
+                cur = self._conn.execute(
+                    "UPDATE images SET sender_id=?, sender_name=? WHERE id=?",
+                    (uid, name, str(image_id)),
+                )
+                updated += int(cur.rowcount)
+        return updated
+
+    def record_group_member(
+        self,
+        *,
+        sender_id: str,
+        group_id: str,
+        group_name: str,
+        nickname: str,
+        card: str,
+    ) -> None:
+        """Persist a user's group membership and group-specific display name."""
+        uid = str(sender_id or "").strip()
+        gid = str(group_id or "").strip()
+        if not uid or not gid:
+            return
+        now = now_iso()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO group_members (sender_id, group_id, group_name, nickname, card, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(sender_id, group_id) DO UPDATE SET "
+                "group_name=excluded.group_name, nickname=excluded.nickname, card=excluded.card, last_seen=excluded.last_seen",
+                (uid, gid, group_name or "", nickname or "", card or "", now, now),
+            )
+
+    def list_group_members(self, sender_id: str = "", limit: int = 200) -> list[dict[str, Any]]:
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if sender_id:
+            clauses.append("sender_id=?")
+            params.append(sender_id)
+        params.append(max(1, min(limit, 1000)))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM group_members WHERE " + " AND ".join(clauses) +
+                " ORDER BY last_seen DESC LIMIT ?", params
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def sender_id_for_alias(self, nickname: str) -> str:
+        name = (nickname or "").strip()
+        if not name:
+            return ""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sender_id FROM sender_aliases WHERE nickname=?", (name,)
+            ).fetchone()
+        return str(row["sender_id"]) if row else ""
+
     def set_sender_alias(self, nickname: str, sender_id: str) -> int:
         """Save a manual nickname→QQ mapping and apply it to legacy rows."""
         name = (nickname or "").strip()
@@ -379,7 +466,7 @@ class Store:
         with self._lock:
             unknown = self._conn.execute(
                 "SELECT i.sender_name AS nickname, COUNT(*) AS total, "
-                "SUM(CASE WHEN i.sender_id IN ('', '1094950020') THEN 1 ELSE 0 END) AS unknown, "
+                "SUM(CASE WHEN i.sender_id = '' THEN 1 ELSE 0 END) AS unknown, "
                 "MAX(i.created_at) AS last_at, a.sender_id AS mapped_id "
                 "FROM images i LEFT JOIN sender_aliases a ON a.nickname=i.sender_name "
                 "WHERE i.sender_name<>'' AND COALESCE(i.stored_path,'')<>'' "
@@ -389,10 +476,56 @@ class Store:
             aliases = self._conn.execute(
                 "SELECT nickname, sender_id, updated_at FROM sender_aliases ORDER BY updated_at DESC"
             ).fetchall()
+        items = []
+        for row in unknown:
+            item = dict(row)
+            item["groups"] = []
+            with self._lock:
+                if item.get("mapped_id"):
+                    groups = self._conn.execute(
+                        "SELECT group_id, group_name, nickname, card, last_seen FROM group_members "
+                        "WHERE sender_id=? ORDER BY last_seen DESC LIMIT 20",
+                        (item["mapped_id"],),
+                    ).fetchall()
+                else:
+                    groups = self._conn.execute(
+                        "SELECT group_id, group_name, nickname, card, last_seen FROM group_members "
+                        "WHERE card=? OR nickname=? ORDER BY last_seen DESC LIMIT 20",
+                        (item["nickname"], item["nickname"]),
+                    ).fetchall()
+            item["groups"] = [dict(g) for g in groups]
+            items.append(item)
         return {
-            "items": [dict(r) for r in unknown],
+            "items": items,
             "aliases": [dict(r) for r in aliases],
         }
+
+    def users_missing_nickname(self, limit: int = 200) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT sender_id FROM images WHERE sender_id<>'' "
+                "AND COALESCE(sender_name,'') IN ('', '未知用户', 'QQ用户') "
+                "ORDER BY sender_id LIMIT ?",
+                (max(1, min(limit, 1000)),),
+            ).fetchall()
+        return [str(r["sender_id"]) for r in rows]
+
+    def set_sender_nickname(self, sender_id: str, nickname: str) -> int:
+        uid = str(sender_id or "").strip()
+        name = str(nickname or "").strip()
+        if not uid or not name:
+            return 0
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE images SET sender_name=? WHERE sender_id=? "
+                "AND COALESCE(sender_name,'') IN ('', '未知用户', 'QQ用户')",
+                (name, uid),
+            )
+            self._conn.execute(
+                "UPDATE group_members SET nickname=? WHERE sender_id=? AND COALESCE(nickname,'')=''",
+                (name, uid),
+            )
+        return int(cur.rowcount)
 
     def backfill_sender_by_name(self, sender_name: str, sender_id: str) -> int:
         """Use a direct message's real QQ to repair same-nickname legacy rows.
@@ -445,9 +578,9 @@ class Store:
                 return False
             current_id = str(row["sender_id"] or "")
             source_type = str(row["source_type"] or "")
-            if not sender_id or sender_id == current_id:
+            if not sender_id:
                 return False
-            if source_type != "forward_training" and current_id not in {"", "1094950020"}:
+            if source_type != "forward_training" and current_id != "" and current_id != sender_id:
                 return False
             self._conn.execute(
                 "UPDATE images SET sender_id=?, sender_name=?, group_id=?, group_name=?, "
@@ -657,9 +790,9 @@ class Store:
         base = (
             "WITH base AS ("
             "SELECT "
-            "CASE WHEN sender_id IN ('', '1094950020') THEN 'name:' || COALESCE(sender_name, '') "
+            "CASE WHEN sender_id = '' THEN 'name:' || COALESCE(sender_name, '') "
             "ELSE 'id:' || sender_id END AS user_key, "
-            "CASE WHEN sender_id IN ('', '1094950020') THEN '' ELSE sender_id END AS sender_id, "
+            "CASE WHEN sender_id = '' THEN '' ELSE sender_id END AS sender_id, "
             "MAX(sender_name) AS sender_name, COUNT(*) AS collect_count, "
             "SUM(CASE WHEN score IS NOT NULL THEN 1 ELSE 0 END) AS confidence_samples, "
             "SUM(CASE WHEN score IS NOT NULL AND score >= ? THEN 1 ELSE 0 END) AS high_count, "
@@ -706,7 +839,7 @@ class Store:
         with self._lock:
             row = self._conn.execute(
                 "SELECT COUNT(*) AS n FROM images "
-                "WHERE COALESCE(stored_path,'')<>'' AND sender_id IN ('', '1094950020')"
+                "WHERE COALESCE(stored_path,'')<>'' AND sender_id = ''"
             ).fetchone()
         return int(row["n"])
 
