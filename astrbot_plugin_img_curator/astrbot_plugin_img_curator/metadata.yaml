@@ -23,7 +23,7 @@ help: |
   /imgfilter test            测试当前图片/视频（不保存）
   /imgfilter confirm|reject <ID前缀>
 
-  群图片、视频和合并聊天记录会自动处理；私聊处理合并记录。
+  群图片、视频和合并聊天记录会自动处理；私聊图片、视频和合并记录也处理。
   在 AstrBot 管理界面的插件“可视化视图”中浏览、纠正标签、按用户导出。
 version: 2.0.0
 support_platforms:

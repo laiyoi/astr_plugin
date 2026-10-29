@@ -1,61 +1,374 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Femboy Detector Dataset</title>
+<title>Femboy Detector 数据集</title>
 <style>
-body{margin:0;background:#101216;color:#e8edf5;font:14px system-ui,sans-serif}
-header{padding:16px 22px;border-bottom:1px solid #29303b;display:flex;gap:16px;align-items:baseline}
-h1{font-size:19px;margin:0}.muted{color:#8c98aa}main{padding:18px 22px}
-.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-input,select,button{background:#1a2029;color:#e8edf5;border:1px solid #354052;border-radius:7px;padding:7px 9px}
-button{cursor:pointer}button:hover{background:#243044}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:13px}
-.card{background:#171d25;border:1px solid #2b3543;border-radius:10px;overflow:hidden}
-.card img{width:100%;height:170px;object-fit:contain;background:#0b0e12}
-.meta{padding:8px 10px;font-size:12px;line-height:1.5}.tag{color:#7fd39b}.score{color:#ffcc75}
-.actions{display:flex;gap:5px;padding:0 10px 10px;flex-wrap:wrap}.actions button{padding:4px 7px;font-size:11px}
-table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:6px;border-bottom:1px solid #29303b;text-align:left}th{color:#8c98aa}
-h2{font-size:15px;margin-top:22px;color:#cbd5e1}.empty{color:#8c98aa;padding:20px}
-</style></head>
-<body><header><h1>Femboy Detector Dataset</h1><span class="muted" id="count"></span></header>
-<main>
-<div class="bar">
-<input id="user" placeholder="按 QQ / 用户筛选" size="18">
-<select id="label"><option value="">全部标签</option><option>collect</option><option>suspicious</option><option>skip</option><option>unlabeled</option></select>
-<select id="status"><option value="">全部状态</option><option>saved</option><option>pending</option><option>rejected</option></select>
-<button id="refresh">刷新</button>
-<button id="export">导出当前筛选</button>
+:root{
+  --bg:#0e1116;--panel:#151a21;--panel2:#1b222c;--line:#2b3543;--line2:#384557;
+  --text:#e7edf5;--muted:#8d9bad;--faint:#657386;--accent:#76b7ff;--accent2:#2f6fed;
+  --green:#55d68a;--amber:#ffc35c;--red:#ff7b84;--violet:#b79cff;
+  --shadow:0 12px 40px rgba(0,0,0,.35);--radius:12px;
+}
+[data-theme="light"]{
+  --bg:#f3f5f8;--panel:#fff;--panel2:#f7f9fc;--line:#dfe5ee;--line2:#cbd5e1;
+  --text:#172033;--muted:#657386;--faint:#8491a3;--accent:#1769d2;--accent2:#1769d2;
+  --green:#138a4b;--amber:#a16200;--red:#c1353f;--violet:#6a4fc4;--shadow:0 12px 40px rgba(20,35,60,.10);
+}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none}
+a{color:var(--accent);text-decoration:none}
+.app{display:flex;min-height:100vh}
+.sidebar{position:fixed;inset:0 auto 0 0;width:232px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:30}
+.brand{padding:20px 18px;border-bottom:1px solid var(--line);display:flex;gap:11px;align-items:center}
+.logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(145deg,var(--accent2),#8b5cf6);display:grid;place-items:center;color:#fff;font-weight:800;font-size:15px}
+.brand strong{display:block;font-size:14px}.brand small{color:var(--muted);font-size:11px}
+.nav{padding:12px 10px;display:grid;gap:4px}
+.nav button{display:flex;align-items:center;gap:10px;width:100%;padding:10px 11px;border-radius:8px;color:var(--muted);text-align:left}
+.nav button .ico{width:18px;height:18px;flex:none;opacity:.9}
+.nav button:hover{background:var(--panel2);color:var(--text)}
+.nav button.active{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-weight:600}
+.sidefoot{margin-top:auto;padding:14px 18px;border-top:1px solid var(--line);color:var(--faint);font-size:11px;line-height:1.7}
+.main{margin-left:232px;flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:18px 28px;display:flex;gap:18px;align-items:flex-start}
+.topbar h1{font-size:21px;line-height:1.25;margin:0 0 4px}.topbar p{margin:0;color:var(--muted);font-size:13px}
+.top-actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.hamburger{display:none;margin-right:8px;padding:7px;border:1px solid var(--line);border-radius:8px}
+.content{padding:22px 28px 110px;max-width:1680px;width:100%}
+.card-panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.input,select{border:1px solid var(--line2);background:var(--panel);border-radius:8px;padding:8px 10px;min-height:36px;outline:none}
+.input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.input::placeholder{color:var(--faint)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line2);background:var(--panel);border-radius:8px;padding:8px 12px;min-height:36px;font-weight:550;white-space:nowrap}
+.btn:hover{background:var(--panel2)}.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{background:color-mix(in srgb,var(--red) 14%,transparent);border-color:color-mix(in srgb,var(--red) 45%,var(--line));color:var(--red)}
+.btn.ghost{border-color:transparent;background:transparent}.btn.ghost:hover{background:var(--panel2)}
+.btn.sm{padding:5px 8px;min-height:28px;font-size:12px;border-radius:6px}
+.seg{display:flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden;background:var(--panel)}
+.seg button{padding:8px 12px;color:var(--muted);border-right:1px solid var(--line)}.seg button:last-child{border-right:0}
+.seg button.active{background:var(--panel2);color:var(--text);font-weight:650}
+.statusline{display:flex;gap:14px;align-items:center;color:var(--muted);font-size:12px;margin:2px 0 12px;flex-wrap:wrap}
+.spacer{flex:1}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(214px,1fr));gap:14px}
+.img-card{background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden;position:relative;transition:border-color .15s,transform .15s}
+.img-card:hover{border-color:var(--line2);transform:translateY(-1px)}.img-card.selected{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.thumb{position:relative;background:#0a0d12;aspect-ratio:4/5;cursor:zoom-in;overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:contain;display:block;background:#0a0d12}
+.thumb .missing{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-size:12px}
+.check{position:absolute;top:9px;left:9px;width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.55);background:rgba(10,14,20,.55);display:grid;place-items:center;color:#fff;z-index:2}
+.check.on{background:var(--accent2);border-color:var(--accent2)}
+.card-main{padding:10px 11px 9px}.card-top{display:flex;gap:7px;align-items:center;justify-content:space-between}
+.pill{font-size:11px;border-radius:999px;padding:2px 8px;font-weight:650;white-space:nowrap;border:1px solid transparent}
+.pill.collect{color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent);border-color:color-mix(in srgb,var(--green) 30%,transparent)}
+.pill.suspicious{color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,transparent);border-color:color-mix(in srgb,var(--amber) 30%,transparent)}
+.pill.skip{color:var(--red);background:color-mix(in srgb,var(--red) 11%,transparent);border-color:color-mix(in srgb,var(--red) 30%,transparent)}
+.pill.unlabeled{color:var(--violet);background:color-mix(in srgb,var(--violet) 12%,transparent);border-color:color-mix(in srgb,var(--violet) 30%,transparent)}
+.score{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}.score b{color:var(--text);font-weight:600}
+.uname{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:6px}
+.umeta{font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-actions{display:flex;gap:5px;padding:0 10px 10px}.card-actions .btn{flex:1;padding:5px 4px;min-height:28px;font-size:11px;border-radius:6px}
+.empty{grid-column:1/-1;padding:60px 20px;text-align:center;color:var(--muted);border:1px dashed var(--line2);border-radius:12px;background:var(--panel)}
+.empty strong{display:block;color:var(--text);font-size:15px;margin-bottom:5px}
+.pager{display:flex;justify-content:center;gap:6px;align-items:center;margin-top:22px;flex-wrap:wrap}.pager .btn{min-width:34px}.pager input{width:64px;text-align:center;padding:5px 6px;min-height:30px}.pager .jump{display:inline-flex;gap:5px;align-items:center;color:var(--muted);font-size:12px}
+.batchbar{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:35;background:var(--panel);border:1px solid var(--accent);border-radius:12px;box-shadow:var(--shadow);padding:10px 14px;display:none;gap:10px;align-items:center;max-width:calc(100vw - 32px);flex-wrap:wrap}
+.batchbar.show{display:flex}.batchbar b{color:var(--accent)}
+.toast{position:fixed;right:22px;bottom:22px;z-index:80;display:grid;gap:8px;max-width:min(380px,calc(100vw - 44px))}
+.toast .t{background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;box-shadow:var(--shadow);font-size:13px;animation:in .18s ease-out}
+.toast .t.err{border-left-color:var(--red)}.toast .t.ok{border-left-color:var(--green)}
+@keyframes in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.modal{position:fixed;inset:0;z-index:70;background:rgba(3,7,12,.68);display:none;align-items:center;justify-content:center;padding:22px}
+.modal.show{display:flex}.modal-card{background:var(--panel);border:1px solid var(--line2);border-radius:14px;box-shadow:var(--shadow);width:min(720px,100%);max-height:92vh;overflow:auto}
+.modal-head{display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--line)}.modal-head h3{margin:0;font-size:16px}.modal-body{padding:18px}.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:13px 18px;border-top:1px solid var(--line)}
+.preview{background:#080b0f;display:grid;place-items:center;min-height:320px;max-height:70vh}.preview img{max-width:100%;max-height:70vh;object-fit:contain}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:12px}.detail{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 10px}.detail small{display:block;color:var(--muted);font-size:11px}.detail b{font-weight:600;word-break:break-word}
+.review{position:fixed;inset:0;z-index:75;background:#080b0f;display:none;grid-template-rows:auto 1fr auto}.review.show{display:grid}
+.review-top{display:flex;gap:14px;align-items:center;padding:13px 18px;border-bottom:1px solid #29303b;color:#e7edf5;background:#0e1116}
+.review-stage{display:grid;place-items:center;padding:14px;min-height:0}.review-stage img{max-width:100%;max-height:calc(100vh - 190px);object-fit:contain}
+.review-foot{display:flex;gap:10px;align-items:center;justify-content:center;padding:14px;border-top:1px solid #29303b;background:#0e1116;flex-wrap:wrap}
+.review-foot .btn{min-width:110px;min-height:42px}.review-meta{color:#8d9bad;font-size:12px;margin-left:auto}
+.review-hint{color:#8d9bad;font-size:11px}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:620px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap}td{font-size:13px}
+tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
+.rank{font-variant-numeric:tabular-nums;color:var(--muted);width:46px}.rank.top{color:var(--amber);font-weight:700}
+.user-cell{display:flex;flex-direction:column;min-width:130px}.user-cell small{color:var(--faint);font-size:11px}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}.secondary{color:var(--muted);font-size:11px}
+.rank-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px}.rank-tabs button{padding:10px 14px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}.rank-tabs button.active{color:var(--text);border-color:var(--accent);font-weight:650}
+.hint{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 13px;color:var(--muted);font-size:12px;line-height:1.7;margin-bottom:15px}
+.checkrow{display:flex;gap:14px;flex-wrap:wrap}.checkline{display:flex;gap:7px;align-items:center;font-size:13px}.checkline input{accent-color:var(--accent2)}
+.export-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:16px}.summary{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:15px;position:sticky;top:92px;height:max-content}
+.summary .big{font-size:28px;font-weight:750;line-height:1.2}.summary .line{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed var(--line);font-size:12px}.summary .line:last-child{border-bottom:0}
+.skeleton{height:270px;border-radius:11px;background:linear-gradient(90deg,var(--panel),var(--panel2),var(--panel));background-size:200% 100%;animation:sh 1.1s infinite}@keyframes sh{to{background-position:-200% 0}}
+.loading{opacity:.55;pointer-events:none}
+.field{display:grid;gap:5px;margin-top:12px}.field label{font-size:12px;color:var(--muted)}.field .row{display:flex;gap:8px}.field .input{width:100%}
+@media(max-width:880px){
+ .sidebar{transform:translateX(-100%);transition:transform .2s;width:250px}.sidebar.open{transform:none}
+ .main{margin-left:0}.hamburger{display:inline-flex}.topbar{padding:14px 16px}.content{padding:16px 14px 110px}
+ .export-grid{grid-template-columns:1fr}.summary{position:static}.top-actions{width:100%;margin-left:0}
+}
+@media(max-width:560px){.grid{grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:9px}.card-actions .btn{font-size:10px}.topbar h1{font-size:18px}.seg button{padding:7px 9px;font-size:12px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="logo">FD</div><div><strong>Femboy Detector</strong><small>图片数据集管理</small></div></div>
+    <nav class="nav">
+      <button data-route="images" class="active"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>图片管理</button>
+      <button data-route="ranking"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3"/></svg>用户排行榜</button>
+      <button data-route="aliases"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>QQ 映射</button>
+      <button data-route="export"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg>数据集导出</button>
+    </nav>
+    <div class="sidefoot">数据来自插件主数据库<br>标注可随时修改并下载</div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" id="menuBtn" aria-label="打开导航"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+      <div><h1 id="pageTitle">图片管理</h1><p id="pageDesc">浏览并纠正收藏图片的标注</p></div>
+      <div class="top-actions" id="topActions"></div>
+    </header>
+    <main class="content">
+      <section id="page-images">
+        <div class="toolbar">
+          <input class="input" id="search" placeholder="搜索用户昵称 / QQ / 群名" style="min-width:240px;flex:1;max-width:420px">
+          <div class="seg" id="labelSeg">
+            <button data-label="" class="active">全部</button><button data-label="collect">collect</button><button data-label="suspicious">suspicious</button><button data-label="skip">skip</button><button data-label="unlabeled">unlabeled</button>
+          </div>
+          <select id="sort"><option value="created_desc">最新优先</option><option value="created_asc">最早优先</option><option value="score_desc">置信度从高到低</option><option value="score_asc">置信度从低到高</option><option value="sender_asc">按用户</option></select>
+          <button class="btn ghost" id="toggleFilters">更多筛选</button>
+          <button class="btn ghost" id="clearFilters">清除</button>
+        </div>
+        <div id="advanced" style="display:none;margin-bottom:14px">
+          <div class="card-panel" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+            <div class="field" style="margin:0"><label>开始日期</label><input type="date" class="input" id="since"></div>
+            <div class="field" style="margin:0"><label>结束日期</label><input type="date" class="input" id="until"></div>
+            <div class="field" style="margin:0"><label>最低置信度</label><input type="number" step="0.01" min="0" max="1" class="input" id="minScore" placeholder="0.00" style="width:110px"></div>
+            <div class="field" style="margin:0"><label>最高置信度</label><input type="number" step="0.01" min="0" max="1" class="input" id="maxScore" placeholder="1.00" style="width:110px"></div>
+            <select id="status"><option value="">全部状态</option><option value="saved">saved</option><option value="pending">pending</option></select>
+            <button class="btn primary" id="applyFilters">应用筛选</button>
+          </div>
+        </div>
+        <div class="statusline"><span id="resultCount">加载中…</span><span id="selectedInfo"></span><span class="spacer"></span><button class="btn sm" id="selectPage">全选当前页</button><button class="btn sm" id="reviewBtn">快捷审核模式</button></div>
+        <div class="grid" id="grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+        <div class="pager" id="pager"></div>
+      </section>
+      <section id="page-ranking" style="display:none">
+        <div class="rank-tabs"><button data-board="count" class="active">发图数量榜</button><button data-board="king">男娘大王榜</button></div>
+        <div class="hint" id="rankHint"></div>
+        <div class="toolbar">
+          <input class="input" id="rankSearch" placeholder="搜索用户 / QQ" style="min-width:200px">
+          <select id="rankRange"><option value="0">全部时间</option><option value="30">最近 30 天</option><option value="7">最近 7 天</option></select>
+          <span id="kingFilters" style="display:none;gap:8px;align-items:center">
+            <label class="secondary">置信度阈值</label><input class="input" id="rankThreshold" type="number" value="0.6" min="0" max="1" step="0.05" style="width:86px">
+            <label class="secondary">最低有效样本</label><input class="input" id="rankMin" type="number" value="2" min="0" step="1" style="width:72px">
+            <select id="rankSort"><option value="high_count">高置信数量</option><option value="high_ratio">高置信占比</option><option value="avg_score">平均置信度</option></select>
+          </span>
+        </div>
+        <div class="card-panel table-wrap" style="padding:4px 14px"><table><thead id="rankHead"></thead><tbody id="rankBody"><tr><td colspan="9"><div class="empty">加载中…</div></td></tr></tbody></table></div>
+        <div class="pager" id="rankPager"></div>
+      </section>
+      <section id="page-aliases" style="display:none">
+        <div class="hint">设置昵称与真实 QQ 的对应关系。保存后会立即回填该昵称下所有 QQ 未知的历史图片；也可以直接发送该用户的图片，让系统自动建立映射。</div>
+        <div class="card-panel" style="margin-bottom:16px">
+          <div class="toolbar" style="margin:0">
+            <input class="input" id="aliasName" placeholder="昵称（必须与历史记录完全一致）" style="min-width:240px;flex:1;max-width:420px">
+            <input class="input" id="aliasQQ" placeholder="真实 QQ（5-20 位数字）" inputmode="numeric" style="width:210px">
+            <button class="btn primary" id="aliasSaveBtn">保存映射</button>
+            <input class="input" id="aliasSearch" placeholder="搜索昵称 / QQ" style="margin-left:auto;width:200px">
+          </div>
+        </div>
+        <div class="card-panel table-wrap" style="padding:4px 14px"><table><thead><tr><th>昵称</th><th>QQ 映射</th><th>图片数</th><th>未补全</th><th>最近</th><th>操作</th></tr></thead><tbody id="aliasBody"><tr><td colspan="6"><div class="empty">加载中…</div></td></tr></tbody></table></div>
+      </section>
+      <section id="page-export" style="display:none">
+        <div class="export-grid">
+          <div class="card-panel">
+            <h2 style="font-size:16px;margin:0 0 6px">选择导出范围</h2>
+            <p class="secondary" style="margin:0 0 14px">ZIP 内按人工确认的标注分目录；未标注图片不会进入数据集。</p>
+            <div id="exportLabels" class="checkrow"></div>
+            <div class="field"><label>时间范围（可选）</label><div class="row"><input type="date" class="input" id="exportSince"><input type="date" class="input" id="exportUntil"></div></div>
+            <div class="field"><label>选项</label><div class="checkrow"><label class="checkline"><input type="checkbox" id="exportDedupe" checked>按 SHA-256 去重</label><label class="checkline"><input type="checkbox" id="exportMissing" checked>排除缺失/无效文件</label></div></div>
+            <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap"><button class="btn primary" id="exportBtn">导出数据集 ZIP</button><button class="btn" id="refreshExport">刷新统计</button></div>
+          </div>
+          <aside class="summary">
+            <div class="secondary">可导出的有效图片</div><div class="big" id="exportTotal">—</div>
+            <div class="secondary" id="exportSize" style="margin-bottom:12px">正在统计…</div>
+            <div id="exportLines"></div>
+            <div class="hint" style="margin:14px 0 0" id="exportHint">统计基于数据库当前的人工标注；模型预测与人工标注不会混用。</div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
 </div>
-<div id="grid" class="grid"><div class="empty">加载中…</div></div>
-<h2>发布者排行（已保存数量 / 平均分）</h2>
-<table><thead><tr><th>QQ</th><th>昵称</th><th>已保存</th><th>平均分</th><th>最近</th></tr></thead><tbody id="users"></tbody></table>
-</main>
+<div class="batchbar" id="batchbar"><b id="batchCount">已选择 0 张</b><button class="btn sm" data-batch="collect">设为 collect</button><button class="btn sm" data-batch="suspicious">设为 suspicious</button><button class="btn sm danger" data-batch="skip">设为 skip</button><button class="btn sm ghost" id="clearSelection">清空选择</button></div>
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">确认</h3><button class="btn ghost" data-close="modal">✕</button></div><div class="modal-body" id="modalBody"></div><div class="modal-foot" id="modalFoot"></div></div></div>
+<div class="review" id="review"><div class="review-top"><button class="btn sm" id="closeReview">退出审核</button><span id="reviewProgress"></span><span class="review-meta" id="reviewMeta"></span></div><div class="review-stage"><img id="reviewImg" alt=""></div><div class="review-foot"><button class="btn" data-review-label="collect">1 · collect</button><button class="btn" data-review-label="suspicious">2 · suspicious</button><button class="btn danger" data-review-label="skip">3 · skip</button><span class="review-hint">← → 切换 · Esc 退出</span></div></div>
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script>
-const V=window.AstrBotPluginView || window.AstrBotPluginPage;
+const V=window.AstrBotPluginView||window.AstrBotPluginPage;
 const $=id=>document.getElementById(id);
-function params(){const p={};for(const k of ['user','label','status']){const v=$(k).value.trim();if(v)p[k]=v}return p}
-function classButtons(id){return ['collect','suspicious','skip','unlabeled'].map(l=>`<button data-id="${id}" data-label="${l}">${l}</button>`).join('')}
-let items=[];
+const LABELS={collect:'collect',suspicious:'suspicious',skip:'skip',unlabeled:'unlabeled'};
+const LABEL_CN={collect:'收藏',suspicious:'可疑',skip:'跳过',unlabeled:'未标注'};
+const S={route:'images',items:[],total:0,limit:24,offset:0,selected:new Set(),pending:new Set(),filters:{q:'',label:'',status:'',since:'',until:'',min_score:'',max_score:'',sort:'created_desc'},seq:0,reviewIdx:0,rankingBoard:'count',rankOffset:0,rankRows:[],legacyUnknown:0,exportLabels:new Set(['collect','suspicious','skip']),busy:false,batchBusy:false};
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function fmtDate(v){if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return esc(v);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}
+function fmtBytes(n){if(n==null)return '—';if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';if(n<1073741824)return (n/1048576).toFixed(1)+' MB';return (n/1073741824).toFixed(2)+' GB'}
+function scoreText(v){return v==null?'—':Number(v).toFixed(3)}
+function toast(msg,type=''){const el=document.createElement('div');el.className='t '+type;el.textContent=msg;$('toast').appendChild(el);setTimeout(()=>el.remove(),3800)}
+function modal(title,body,foot){$('modalTitle').textContent=title;$('modalBody').innerHTML=body;$('modalFoot').innerHTML=foot;$('modal').classList.add('show')}
+function closeModal(){$('modal').classList.remove('show')}
+function confirmDialog(title,body){return new Promise(resolve=>{modal(title,body,'<button class="btn" data-close="modal">取消</button><button class="btn danger" id="confirmYes">确认</button>');$('confirmYes').onclick=()=>{closeModal();resolve(true)};$('modal').querySelectorAll('[data-close="modal"]').forEach(b=>b.onclick=()=>{closeModal();resolve(false)})})}
+$('modal').addEventListener('click',e=>{if(e.target===$('modal'))closeModal()});
+async function apiGet(path,params){const r=await V.apiGet(path,params);return r}
+async function apiPost(path,body){return await V.apiPost(path,body)}
+function buildImageParams(){const p={limit:S.limit,offset:S.offset,sort:S.filters.sort};for(const k of ['q','label','status','since','until']){if(S.filters[k])p[k]=S.filters[k]}for(const k of ['min_score','max_score']){if(S.filters[k]!=='')p[k]=S.filters[k]}return p}
+function matchesFilter(item){const f=S.filters;if(f.label&&item.label!==f.label)return false;if(f.status&&item.status!==f.status)return false;if(f.q){const q=f.q.toLowerCase();if(![item.sender_name,item.sender_id,item.group_name].some(v=>String(v||'').toLowerCase().includes(q)))return false}if(f.min_score!==''&&(item.score==null||Number(item.score)<Number(f.min_score)))return false;if(f.max_score!==''&&(item.score==null||Number(item.score)>Number(f.max_score)))return false;return true}
+function syncUrl(){const p=new URLSearchParams();for(const k of ['q','label','status','since','until','min_score','max_score','sort']){if(S.filters[k])p.set(k,S.filters[k])}if(S.offset)p.set('offset',S.offset);history.replaceState(null,'',`#images${p.toString()?'?'+p:''}`)}
+function parseRoute(){const h=location.hash.replace(/^#/,'')||'images';const [route,qs]=h.split('?');const p=new URLSearchParams(qs||'');if(route==='images'){if(p.get('user'))S.filters.q=p.get('user');else if(p.get('q'))S.filters.q=p.get('q');S.filters.label=p.get('label')||'';S.filters.status=p.get('status')||'';S.filters.since=p.get('since')||'';S.filters.until=p.get('until')||'';S.filters.min_score=p.get('min_score')||'';S.filters.max_score=p.get('max_score')||'';S.filters.sort=p.get('sort')||'created_desc';S.offset=Number(p.get('offset')||0)}return ['images','ranking','aliases','export'].includes(route)?route:'images'}
+function setRoute(route){if(route===S.route){return}closeReview();S.route=route;document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.route===route));document.querySelectorAll('.content>section').forEach(s=>s.style.display='none');$('page-'+route).style.display='';const meta={images:['图片管理','浏览并纠正收藏图片的标注'],ranking:['用户排行榜','基于真实收集记录的贡献与模型置信度'],aliases:['QQ 映射','用昵称与真实 QQ 补全历史合并记录'],export:['数据集导出','选择人工标注并下载训练用 ZIP']};$('pageTitle').textContent=meta[route][0];$('pageDesc').textContent=meta[route][1];$('topActions').innerHTML='';if(route==='images')loadImages();if(route==='ranking')loadRanking();if(route==='aliases')loadAliases();if(route==='export')loadExport()}
+function skeleton(n=8){return Array.from({length:n},()=>'<div class="skeleton"></div>').join('')}
+function renderGrid(){
+ const g=$('grid');
+ if(!S.items.length){g.innerHTML='<div class="empty"><strong>没有匹配的图片</strong>尝试调整筛选条件，或清除搜索。</div>';return}
+ g.innerHTML=S.items.map(it=>`<article class="img-card${S.selected.has(it.id)?' selected':''}" data-id="${it.id}">
+   <div class="thumb" data-preview="${it.id}"><img data-thumb="${it.id}" alt=""><div class="missing" style="display:none">图片不可用</div>
+   <button class="check${S.selected.has(it.id)?' on':''}" data-select="${it.id}" aria-label="选择">${S.selected.has(it.id)?'✓':''}</button></div>
+   <div class="card-main"><div class="card-top"><span class="pill ${it.label||'unlabeled'}">${esc(it.label||'unlabeled')}</span><span class="score">置信 <b>${scoreText(it.score)}</b></span></div>
+   <div class="uname" title="${esc(it.sender_name||it.sender_id||'')}">${esc(it.sender_name||'未知用户')}</div>
+   <div class="umeta">${esc(it.sender_id||'QQ 未记录')} · ${fmtDate(it.created_at)}</div></div>
+   <div class="card-actions">${['collect','suspicious','skip'].map(l=>`<button class="btn sm" data-set="${l}" data-id="${it.id}">${l}</button>`).join('')}</div>
+ </article>`).join('');
+ $('resultCount').textContent=`${S.total} 张图片`;
+ updateBatchbar();
+ hydrateThumbs();
+}
+const thumbCache=new Map();
+async function thumbFor(id){if(thumbCache.has(id))return thumbCache.get(id);const d=await apiGet('curator/thumb/'+encodeURIComponent(id));thumbCache.set(id,d.data_url);return d.data_url}
+async function hydrateThumbs(){
+ const imgs=[...document.querySelectorAll('#grid img[data-thumb]')];let cursor=0;
+ async function worker(){while(cursor<imgs.length){const img=imgs[cursor++];const id=img.dataset.thumb;try{img.src=await thumbFor(id)}catch(e){img.style.display='none';const miss=img.parentElement.querySelector('.missing');if(miss)miss.style.display='grid'}}}
+ await Promise.all(Array.from({length:Math.min(6,imgs.length)},worker));
+}
+async function loadFull(id){const d=await apiGet('curator/image/'+encodeURIComponent(id));return d.data_url}
+function renderPager(){
+ const pages=Math.max(1,Math.ceil(S.total/S.limit));const cur=Math.floor(S.offset/S.limit)+1;let html=`<button class="btn sm" data-page="${cur-1}" ${cur<=1?'disabled':''}>上一页</button>`;
+ const start=Math.max(1,cur-2),end=Math.min(pages,cur+2);for(let i=start;i<=end;i++)html+=`<button class="btn sm ${i===cur?'primary':''}" data-page="${i}">${i}</button>`;
+ html+=`<button class="btn sm" data-page="${cur+1}" ${cur>=pages?'disabled':''}>下一页</button><span class="secondary">第 ${cur}/${pages} 页</span><span class="jump">跳至 <input class="input" id="jumpPage" type="number" min="1" max="${pages}" value="${cur}" aria-label="跳转页码"> 页 <button class="btn sm" id="jumpBtn">跳转</button></span>`;$('pager').innerHTML=html;
+}
+function syncControls(){
+ $('search').value=S.filters.q||'';$('labelSeg').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.label===(S.filters.label||'')));
+ $('sort').value=S.filters.sort||'created_desc';$('status').value=S.filters.status||'';$('since').value=(S.filters.since||'').slice(0,10);$('until').value=(S.filters.until||'').slice(0,10);$('minScore').value=S.filters.min_score||'';$('maxScore').value=S.filters.max_score||'';
+}
 async function loadImages(){
-  const p=params(); $('grid').innerHTML='<div class="empty">加载中…</div>';
-  try{
-    const d=await V.apiGet('curator/images',p); items=d.items||[];
-    $('count').textContent=(d.total??items.length)+' 张';
-    if(!items.length){$('grid').innerHTML='<div class="empty">没有匹配图片</div>';return}
-    $('grid').innerHTML=items.map(x=>`<div class="card"><img id="img-${x.id}" alt=""><div class="meta"><span class="tag">${x.label}</span> · <span class="score">${Number(x.score||0).toFixed(3)}</span><br>${x.sender_name||'?'} / ${x.sender_id||'?'}<br>${x.group_name||'私聊'} · ${x.created_at||''}</div><div class="actions">${classButtons(x.id)}</div></div>`).join('');
-    for(const x of items){
-      try{const r=await V.apiGet('curator/image/'+encodeURIComponent(x.id)); const img=$('img-'+x.id); if(img&&r.data_url) img.src=r.data_url}catch(e){console.warn(e)}
-    }
-  }catch(e){$('grid').innerHTML='<div class="empty">加载失败：'+e.message+'</div>'}
+ syncControls();
+ const seq=++S.seq;S.busy=true;$('resultCount').textContent='加载中…';$('grid').innerHTML=skeleton();
+ try{const d=await apiGet('curator/images',buildImageParams());if(seq!==S.seq)return;S.items=d.items||[];S.total=d.total||0;renderGrid();renderPager();syncUrl()}
+ catch(e){if(seq!==S.seq)return;$('grid').innerHTML='<div class="empty"><strong>加载失败</strong>'+esc(e.message||'请求失败')+'</div>';$('resultCount').textContent='加载失败';toast('加载图片失败：'+e.message,'err')}
+ finally{if(seq===S.seq)S.busy=false}
 }
-async function loadUsers(){
-  try{const d=await V.apiGet('curator/users');$('users').innerHTML=(d.items||[]).map(x=>`<tr><td>${x.sender_id}</td><td>${x.sender_name||''}</td><td>${x.saved_count}</td><td>${Number(x.avg_score||0).toFixed(3)}</td><td>${x.last_at||''}</td></tr>`).join('')}catch(e){console.warn(e)}
+async function setOne(item,label){
+ if(S.busy||S.pending?.has(item.id))return;
+ S.pending=S.pending||new Set();S.pending.add(item.id);
+ try{
+   const r=await apiPost('curator/label',{id:item.id,label});
+   item.label=label;item.review_label=label;
+   if(r.status)item.status=r.status;
+   if(r.removed||!matchesFilter(item)){
+     S.items=S.items.filter(x=>x.id!==item.id);S.total=Math.max(0,S.total-1);S.selected.delete(item.id);
+   }
+   renderGrid();renderPager();updateBatchbar();syncUrl();toast(`已设为 ${label}`);
+ }catch(e){toast('修改失败：'+(e.message||'请求失败'),'err')}
+ finally{S.pending.delete(item.id)}
 }
-document.addEventListener('click',async e=>{
-  if(e.target.id==='refresh'){loadImages();loadUsers()}
-  else if(e.target.id==='export'){V.download('curator/export',params(),'training_dataset.zip')}
-  else if(e.target.dataset.id&&e.target.dataset.label){await V.apiPost('curator/label',{id:e.target.dataset.id,label:e.target.dataset.label});loadImages()}
-});
-V.ready().then(()=>{loadImages();loadUsers()});
+async function batchSet(label){
+ if(!S.selected.size||S.batchBusy)return;
+ const count=S.selected.size;const ok=await confirmDialog('批量修改标注',`将 <b>${count}</b> 张图片设为 <b>${esc(label)}</b>。此操作会修改人工标注并立即生效。`);if(!ok)return;
+ S.batchBusy=true;
+ const ids=[...S.selected];$('batchbar').classList.add('loading');
+ try{const r=await apiPost('curator/labels/batch',{ids,label});r.failed?.forEach(f=>S.selected.delete(f.id));S.selected.clear();toast(`已处理 ${r.ok}/${r.total} 张${r.failed?.length?'，失败 '+r.failed.length+' 张':''}`,r.failed?.length?'err':'ok');await loadImages()}
+ catch(e){toast('批量修改失败：'+e.message,'err')}
+ finally{$('batchbar').classList.remove('loading');S.batchBusy=false;updateBatchbar()}
+}
+function updateBatchbar(){
+ const bar=$('batchbar');bar.classList.toggle('show',S.selected.size>0);$('batchCount').textContent=`已选择 ${S.selected.size} 张`;
+ $('selectedInfo').textContent=S.selected.size?`已选择 ${S.selected.size} 张`:'';
+ document.querySelectorAll('#grid [data-select]').forEach(b=>{const on=S.selected.has(b.dataset.select);b.classList.toggle('on',on);b.textContent=on?'✓':'';b.closest('.img-card').classList.toggle('selected',on)});
+}
+function preview(id){const it=S.items.find(x=>x.id===id);if(!it)return;modal('图片预览',`<div class="preview"><img id="previewImg" alt="" style="min-height:220px"></div><div class="detail-grid"><div class="detail"><small>标注</small><b>${esc(it.label)}</b></div><div class="detail"><small>用户</small><b>${esc(it.sender_name||it.sender_id||'—')}</b></div><div class="detail"><small>置信度</small><b>${scoreText(it.score)}</b></div><div class="detail"><small>时间</small><b>${fmtDate(it.created_at)}</b></div></div>`,'<button class="btn" data-close="modal">关闭</button>');$('modal').querySelectorAll('[data-close="modal"]').forEach(b=>b.onclick=closeModal);thumbFor(id).then(src=>{if($('previewImg'))$('previewImg').src=src});loadFull(id).then(src=>{if($('previewImg'))$('previewImg').src=src}).catch(()=>{})}
+function startReview(){if(!S.items.length){toast('当前没有可审核的图片','err');return}S.reviewIdx=0;renderReview();$('review').classList.add('show')}
+function closeReview(){$('review').classList.remove('show')}
+function renderReview(){const it=S.items[S.reviewIdx];if(!it){closeReview();return}$('reviewImg').src='';thumbFor(it.id).then(src=>{$('reviewImg').src=src});loadFull(it.id).then(src=>{$('reviewImg').src=src}).catch(()=>{});$('reviewProgress').textContent=`${S.reviewIdx+1} / ${S.items.length}`;$('reviewMeta').textContent=`${it.label} · ${it.sender_name||it.sender_id||'未知用户'} · 置信 ${scoreText(it.score)}`}
+async function reviewSet(label){const it=S.items[S.reviewIdx];if(!it)return;try{const r=await apiPost('curator/label',{id:it.id,label});it.label=label;if(r.status)it.status=r.status;S.selected.delete(it.id);S.reviewIdx++;if(S.reviewIdx>=S.items.length){closeReview();toast('本页审核完成','ok');loadImages()}else renderReview();toast(`已标记 ${label}`)}catch(e){toast('保存失败：'+e.message,'err')}}
+// ranking
+function rankHint(){const legacy=S.legacyUnknown?`<div style="margin-top:8px;color:var(--amber)">有 ${S.legacyUnknown} 张历史/旧私聊记录没有可靠的图片发送者 QQ，当前按昵称分组展示，QQ 显示为未知；无法从现有数据还原真实 QQ。</div>`:'';if(S.rankingBoard==='count')return '发图数量榜只统计最终标注为 <b>collect</b> 的图片；suspicious 与 skip 不计入。数据库不保留改判历史，因此这是当前有效口径，不是历史累计收集数。'+legacy;return '男娘大王榜只统计有效 collect 图片中存在模型置信度的记录；<b>置信度 = 模型 collect 概率</b>，缺失置信度不计入分母。综合排名可切换高置信数量/占比/平均分。'+legacy}
+function loadRanking(){
+ S.rankOffset=0;S.rankRows=[];fetchRanking();
+}
+async function fetchRanking(append=false){
+ const isKing=S.rankingBoard==='king';const p={limit:50,offset:append?S.rankRows.length:0,sort:isKing?($('rankSort').value||'high_count'):'collect_count',range_days:$('rankRange').value,q:$('rankSearch').value.trim()};
+ if(isKing){p.threshold=$('rankThreshold').value===''?0.6:Number($('rankThreshold').value);p.min_samples=$('rankMin').value===''?2:Number($('rankMin').value)}
+ $('rankHint').innerHTML=rankHint();$('kingFilters').style.display=isKing?'inline-flex':'none';
+ try{const d=await apiGet('curator/ranking',p);S.legacyUnknown=d.legacy_unknown||0;if(!append)S.rankRows=[];S.rankRows=S.rankRows.concat(d.items||[]);renderRanking(d.total||0);$('rankPager').innerHTML=S.rankRows.length< (d.total||0)?`<button class="btn sm" id="rankMore">加载更多</button>`:'';if($('rankMore'))$('rankMore').onclick=()=>fetchRanking(true)}catch(e){$('rankBody').innerHTML=`<tr><td colspan="9"><div class="empty">加载失败：${esc(e.message)}</div></td></tr>`}
+}
+function renderRanking(total){
+ const isKing=S.rankingBoard==='king';$('rankHead').innerHTML=isKing?'<tr><th>排名</th><th>用户</th><th>有效 collect</th><th>有效样本</th><th>高置信数</th><th>高置信占比</th><th>平均置信度</th><th>最高</th><th>最近</th></tr>':'<tr><th>排名</th><th>用户</th><th>有效 collect</th><th>最近一次有效收集</th></tr>';
+ $('rankBody').innerHTML=S.rankRows.length?S.rankRows.map((r,i)=>{const rank=(appendBase=i+1);const top=i<3?' top':'';return `<tr class="clickable" data-user="${esc(r.sender_id||'')}" data-name="${esc(r.sender_name||'')}"><td class="rank${top}">${r.rank||(i+1)}</td><td><div class="user-cell"><span>${esc(r.sender_name||'未知用户')}</span><small>${r.sender_id?('QQ '+esc(r.sender_id)):'QQ 未记录'}</small></div></td>${isKing?`<td class="num">${r.collect_count}</td><td class="num">${r.confidence_samples}</td><td class="num">${r.high_count}</td><td class="num">${(r.high_ratio*100).toFixed(1)}%</td><td class="num">${r.avg_score==null?'—':Number(r.avg_score).toFixed(3)}</td><td class="num">${r.max_score==null?'—':Number(r.max_score).toFixed(3)}</td><td class="secondary">${fmtDate(r.last_at)}</td>`:`<td class="num">${r.collect_count}</td><td class="secondary">${fmtDate(r.last_at)}</td>`}</tr>`}).join(''):'<tr><td colspan="9"><div class="empty">暂无符合条件的用户</div></td></tr>';
+}
+// export
+function exportLabelRows(counts){$('exportLabels').innerHTML=['collect','suspicious','skip'].map(l=>`<label class="checkline"><input type="checkbox" data-export-label="${l}" ${S.exportLabels.has(l)?'checked':''}>${l} <span class="secondary">(${counts?.[l]??'—'})</span></label>`).join('')}
+async function loadExport(){exportLabelRows();await refreshSummary()}
+async function refreshSummary(){
+ const labels=[...S.exportLabels];const p={labels:labels.join(','),dedupe:$('exportDedupe').checked?1:0,since:$('exportSince').value?$('exportSince').value+'T00:00:00':'' ,until:$('exportUntil').value?$('exportUntil').value+'T23:59:59':''};
+ try{const d=await apiGet('curator/export/summary',p);exportLabelRows(d.counts);$('exportTotal').textContent=d.total.toLocaleString()+' 张';$('exportSize').textContent=`约 ${fmtBytes(d.size_bytes)}${d.missing?' · '+d.missing+' 张缺失':''}${d.duplicates?' · '+d.duplicates+' 张重复':''}`;$('exportLines').innerHTML=Object.entries(d.counts).map(([k,v])=>`<div class="line"><span>${k}</span><b>${v.toLocaleString()} 张</b></div>`).join('')}catch(e){$('exportTotal').textContent='—';$('exportSize').textContent='统计失败：'+e.message}
+}
+async function doExport(){const labels=[...S.exportLabels];if(!labels.length){toast('请至少选择一个标注','err');return}$('exportBtn').disabled=true;const old=$('exportBtn').textContent;$('exportBtn').textContent='正在打包…';try{await V.download('curator/export',{labels:labels.join(','),dedupe:$('exportDedupe').checked?1:0,include_missing:$('exportMissing').checked?0:1,since:$('exportSince').value?$('exportSince').value+'T00:00:00':'',until:$('exportUntil').value?$('exportUntil').value+'T23:59:59':''},'dataset.zip');toast('数据集 ZIP 已开始下载','ok')}catch(e){toast('导出失败：'+e.message,'err')}finally{$('exportBtn').disabled=false;$('exportBtn').textContent=old}}
+// aliases
+let aliasCache=[];
+async function loadAliases(){
+ try{const d=await apiGet('curator/aliases');S.aliasItems=d.items||[];S.aliasKnown=d.aliases||[];renderAliases()}catch(e){$('aliasBody').innerHTML=`<tr><td colspan="6"><div class="empty">加载失败：${esc(e.message)}</div></td></tr>`}
+}
+function renderAliases(){
+ const q=$('aliasSearch').value.trim().toLowerCase();const items=S.aliasItems.filter(x=>!q||String(x.nickname).toLowerCase().includes(q)||String(x.mapped_id||'').includes(q));
+ $('aliasBody').innerHTML=items.length?items.map(x=>`<tr><td><div class="user-cell"><span>${esc(x.nickname)}</span><small>${x.last_at?fmtDate(x.last_at):''}</small></div></td><td><input class="input" data-alias-input="${esc(x.nickname)}" value="${esc(x.mapped_id||'')}" placeholder="输入 QQ" inputmode="numeric" style="width:150px"></td><td class="num">${x.total}</td><td class="num">${x.unknown||0}</td><td class="secondary">${fmtDate(x.last_at)}</td><td><button class="btn sm primary" data-alias-save="${esc(x.nickname)}">保存</button></td></tr>`).join(''):'<tr><td colspan="6"><div class="empty">没有需要补全的昵称</div></td></tr>';
+}
+async function saveAlias(nickname,qq){
+ qq=String(qq||'').trim();if(!/^[0-9]{5,20}$/.test(qq)){toast('QQ 必须是 5-20 位数字','err');return}
+ try{const r=await apiPost('curator/aliases',{nickname,sender_id:qq});toast(`已保存映射，补全 ${r.updated||0} 张图片`,'ok');await loadAliases();if(S.legacyUnknown)loadRanking()}catch(e){toast('保存失败：'+e.message,'err')}
+}
+$('aliasSaveBtn').onclick=()=>saveAlias($('aliasName').value.trim(),$('aliasQQ').value.trim());
+$('aliasSearch').addEventListener('input',renderAliases);
+$('aliasBody').addEventListener('click',e=>{const b=e.target.closest('[data-alias-save]');if(!b)return;const n=b.dataset.aliasSave;const input=document.querySelector(`[data-alias-input="${CSS.escape(n)}"]`);saveAlias(n,input?.value||'')});
+// events
+document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{location.hash=b.dataset.route;$('sidebar').classList.remove('open')});
+$('menuBtn').onclick=()=>$('sidebar').classList.toggle('open');
+$('modal').addEventListener('click',e=>{if(e.target===$('modal'))closeModal()});
+$('labelSeg').addEventListener('click',e=>{const b=e.target.closest('button[data-label]');if(!b)return;S.filters.label=b.dataset.label;document.querySelectorAll('#labelSeg button').forEach(x=>x.classList.toggle('active',x===b));S.offset=0;loadImages()});
+$('sort').onchange=e=>{S.filters.sort=e.target.value;S.offset=0;loadImages()};
+$('search').addEventListener('input',(()=>{let t;return e=>{clearTimeout(t);t=setTimeout(()=>{S.filters.q=e.target.value.trim();S.offset=0;loadImages()},320)}})());
+$('toggleFilters').onclick=()=>{const a=$('advanced');a.style.display=a.style.display==='none'?'block':'none'};
+$('applyFilters').onclick=()=>{S.filters.since=$('since').value?$('since').value+'T00:00:00':'';S.filters.until=$('until').value?$('until').value+'T23:59:59':'';S.filters.min_score=$('minScore').value;S.filters.max_score=$('maxScore').value;S.filters.status=$('status').value;S.offset=0;loadImages()};
+$('clearFilters').onclick=()=>{S.filters={q:'',label:'',status:'',since:'',until:'',min_score:'',max_score:'',sort:'created_desc'};S.offset=0;$('search').value='';$('since').value='';$('until').value='';$('minScore').value='';$('maxScore').value='';$('status').value='';document.querySelectorAll('#labelSeg button').forEach((b,i)=>b.classList.toggle('active',i===0));loadImages()};
+$('grid').addEventListener('click',e=>{const sel=e.target.closest('[data-select]');if(sel){const id=sel.dataset.select;S.selected.has(id)?S.selected.delete(id):S.selected.add(id);updateBatchbar();return}const set=e.target.closest('[data-set]');if(set){const it=S.items.find(x=>x.id===set.dataset.id);if(it)setOne(it,set.dataset.set);return}const pv=e.target.closest('[data-preview]');if(pv)preview(pv.dataset.preview)});
+function jumpPage(){const input=$('jumpPage');if(!input)return;const pages=Math.max(1,Math.ceil(S.total/S.limit));const page=Math.max(1,Math.min(pages,Number(input.value)||1));S.offset=(page-1)*S.limit;loadImages();window.scrollTo({top:0,behavior:'smooth'})}
+$('pager').addEventListener('click',e=>{if(e.target.id==='jumpBtn'){jumpPage();return}const b=e.target.closest('[data-page]');if(!b||b.disabled)return;S.offset=(Number(b.dataset.page)-1)*S.limit;loadImages();window.scrollTo({top:0,behavior:'smooth'})});
+$('pager').addEventListener('keydown',e=>{if(e.target.id==='jumpPage'&&e.key==='Enter')jumpPage()});
+$('batchbar').addEventListener('click',e=>{const b=e.target.closest('[data-batch]');if(b)batchSet(b.dataset.batch);if(e.target.id==='clearSelection'){S.selected.clear();updateBatchbar()}});
+$('selectPage').onclick=()=>{S.items.forEach(it=>S.selected.add(it.id));updateBatchbar()};
+$('reviewBtn').onclick=startReview;$('closeReview').onclick=closeReview;$('review').addEventListener('click',e=>{const b=e.target.closest('[data-review-label]');if(b)reviewSet(b.dataset.reviewLabel)});
+document.addEventListener('keydown',e=>{if($('review').classList.contains('show')){if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))return;if(e.key==='Escape'){closeReview()}else if(e.key==='1'){reviewSet('collect')}else if(e.key==='2'){reviewSet('suspicious')}else if(e.key==='3'){reviewSet('skip')}else if(e.key==='ArrowLeft'){S.reviewIdx=Math.max(0,S.reviewIdx-1);renderReview()}else if(e.key==='ArrowRight'){S.reviewIdx=Math.min(S.items.length-1,S.reviewIdx+1);renderReview()}e.preventDefault();return}if(e.key==='Escape'){closeModal();$('sidebar').classList.remove('open')}});
+document.querySelectorAll('.rank-tabs button').forEach(b=>b.onclick=()=>{S.rankingBoard=b.dataset.board;document.querySelectorAll('.rank-tabs button').forEach(x=>x.classList.toggle('active',x===b));loadRanking()});
+$('rankSearch').addEventListener('input',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(loadRanking,300)}})());
+['rankRange','rankSort','rankThreshold','rankMin'].forEach(id=>$(id).addEventListener('change',loadRanking));
+$('rankBody').addEventListener('click',e=>{const tr=e.target.closest('tr[data-user]');if(!tr)return;const key=tr.dataset.user||tr.dataset.name||'';location.hash='#images?user='+encodeURIComponent(key)+'&label=collect'});
+$('exportLabels').addEventListener('change',e=>{const cb=e.target.closest('[data-export-label]');if(!cb)return;cb.checked?S.exportLabels.add(cb.dataset.exportLabel):S.exportLabels.delete(cb.dataset.exportLabel);refreshSummary()});
+['exportDedupe','exportMissing','exportSince','exportUntil'].forEach(id=>$(id).addEventListener('change',refreshSummary));$('refreshExport').onclick=refreshSummary;$('exportBtn').onclick=doExport;
+$('modal').addEventListener('click',e=>{const b=e.target.closest('[data-close="modal"]');if(b)closeModal()});
+// boot
+const initial=parseRoute();S.route=initial;document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.route===initial));document.querySelectorAll('.content>section').forEach(s=>s.style.display='none');$('page-'+initial).style.display='';const meta={images:['图片管理','浏览并纠正收藏图片的标注'],ranking:['用户排行榜','基于真实收集记录的贡献与模型置信度'],aliases:['QQ 映射','用昵称与真实 QQ 补全历史合并记录'],export:['数据集导出','选择人工标注并下载训练用 ZIP']};$('pageTitle').textContent=meta[initial][0];$('pageDesc').textContent=meta[initial][1];
+if(initial==='images'){if(S.filters.q)$('search').value=S.filters.q;if(S.filters.label)$('labelSeg').querySelector(`[data-label="${S.filters.label}"]`)?.classList.add('active');loadImages()}else if(initial==='ranking'){loadRanking()}else if(initial==='aliases'){loadAliases()}else{loadExport()}
+window.addEventListener('hashchange',()=>{const r=parseRoute();if(r!==S.route)setRoute(r);else if(r==='images')loadImages();else if(r==='ranking')loadRanking();else if(r==='aliases')loadAliases();else if(r==='export')loadExport()});
 </script></body></html>

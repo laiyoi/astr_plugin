@@ -74,12 +74,12 @@
   "queue_size": {
     "description": "队列容量",
     "type": "int",
-    "default": 64
+    "default": 256
   },
   "rate_limit_count": {
     "description": "时间窗内最多处理媒体数",
     "type": "int",
-    "default": 20
+    "default": 60
   },
   "rate_limit_window_sec": {
     "description": "限流时间窗秒数",
@@ -90,5 +90,10 @@
     "description": "ONNX CPU 线程数",
     "type": "int",
     "default": 4
+  },
+  "image_download_timeout_sec": {
+    "description": "图片下载超时秒数",
+    "type": "int",
+    "default": 60
   }
 }

@@ -110,6 +110,8 @@ class Store:
                 CREATE INDEX IF NOT EXISTS idx_images_status ON images(status);
                 CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at);
                 CREATE INDEX IF NOT EXISTS idx_images_sha ON images(sha256);
+                CREATE INDEX IF NOT EXISTS idx_images_sender ON images(sender_id, status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_images_score ON images(score);
                 CREATE TABLE IF NOT EXISTS seen (
                     sha256 TEXT NOT NULL,
                     image_id TEXT NOT NULL,
@@ -125,6 +127,11 @@ class Store:
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS sender_aliases (
+                    nickname TEXT PRIMARY KEY,
+                    sender_id TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
                 """
             )
@@ -327,6 +334,132 @@ class Store:
         }
 
     # -- web / review ----------------------------------------------------
+    def update_prediction(
+        self,
+        image_id: str,
+        *,
+        label: str,
+        score: float,
+        margin: float,
+        latency_ms: float,
+        model: str,
+    ) -> bool:
+        """Fill a model prediction for an imported row without a human label."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE images SET top_group=?, score=?, margin=?, latency_ms=?, model=? "
+                "WHERE id=? AND COALESCE(review_label,'')=''",
+                (label, score, margin, latency_ms, model, image_id),
+            )
+        return cur.rowcount > 0
+
+    def set_sender_alias(self, nickname: str, sender_id: str) -> int:
+        """Save a manual nickname→QQ mapping and apply it to legacy rows."""
+        name = (nickname or "").strip()
+        uid = (sender_id or "").strip()
+        if not name:
+            raise ValueError("nickname is required")
+        if not uid.isdigit() or not (5 <= len(uid) <= 20):
+            raise ValueError("QQ 必须是 5-20 位数字")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sender_aliases (nickname, sender_id, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(nickname) DO UPDATE SET sender_id=excluded.sender_id, updated_at=excluded.updated_at",
+                (name, uid, now_iso()),
+            )
+            cur = self._conn.execute(
+                "UPDATE images SET sender_id=?, "
+                "source_type=CASE WHEN source_type='forward_training' THEN 'image' ELSE source_type END "
+                "WHERE sender_name=? AND sender_id IN ('', '1094950020')",
+                (uid, name),
+            )
+        return int(cur.rowcount)
+
+    def list_sender_aliases(self) -> dict[str, Any]:
+        with self._lock:
+            unknown = self._conn.execute(
+                "SELECT i.sender_name AS nickname, COUNT(*) AS total, "
+                "SUM(CASE WHEN i.sender_id IN ('', '1094950020') THEN 1 ELSE 0 END) AS unknown, "
+                "MAX(i.created_at) AS last_at, a.sender_id AS mapped_id "
+                "FROM images i LEFT JOIN sender_aliases a ON a.nickname=i.sender_name "
+                "WHERE i.sender_name<>'' AND COALESCE(i.stored_path,'')<>'' "
+                "GROUP BY i.sender_name HAVING unknown > 0 "
+                "ORDER BY total DESC, nickname ASC"
+            ).fetchall()
+            aliases = self._conn.execute(
+                "SELECT nickname, sender_id, updated_at FROM sender_aliases ORDER BY updated_at DESC"
+            ).fetchall()
+        return {
+            "items": [dict(r) for r in unknown],
+            "aliases": [dict(r) for r in aliases],
+        }
+
+    def backfill_sender_by_name(self, sender_name: str, sender_id: str) -> int:
+        """Use a direct message's real QQ to repair same-nickname legacy rows.
+
+        Merged-forward nodes sometimes expose only a nickname plus a fallback
+        id.  When the same nickname later sends a direct image, that direct
+        event has a reliable QQ and can fill the historical rows.
+        """
+        name = (sender_name or "").strip()
+        uid = (sender_id or "").strip()
+        if not name or not uid or uid == "1094950020":
+            return 0
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sender_aliases (nickname, sender_id, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(nickname) DO UPDATE SET sender_id=excluded.sender_id, updated_at=excluded.updated_at",
+                (name, uid, now_iso()),
+            )
+            cur = self._conn.execute(
+                "UPDATE images SET sender_id=?, "
+                "source_type=CASE WHEN source_type='forward_training' THEN 'image' ELSE source_type END, "
+                "reviewed_at=COALESCE(reviewed_at, ?) "
+                "WHERE sender_name=? AND sender_id IN ('', '1094950020')",
+                (uid, now_iso(), name),
+            )
+        return int(cur.rowcount)
+
+    def refresh_sender_metadata(
+        self,
+        sha256: str,
+        *,
+        sender_id: str,
+        sender_name: str,
+        group_id: str = "",
+        group_name: str = "",
+        message_id: str = "",
+    ) -> bool:
+        """Correct a legacy/imported row's sender when the same image is resent.
+
+        Only records with a known fallback/import provenance are touched; a
+        previously valid sender is never overwritten by a later forward.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, sender_id, source_type FROM images WHERE sha256=? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (sha256,),
+            ).fetchone()
+            if not row:
+                return False
+            current_id = str(row["sender_id"] or "")
+            source_type = str(row["source_type"] or "")
+            if not sender_id or sender_id == current_id:
+                return False
+            if source_type != "forward_training" and current_id not in {"", "1094950020"}:
+                return False
+            self._conn.execute(
+                "UPDATE images SET sender_id=?, sender_name=?, group_id=?, group_name=?, "
+                "message_id=?, source_type=CASE WHEN source_type='forward_training' THEN 'image' ELSE source_type END "
+                "WHERE id=?",
+                (
+                    sender_id, sender_name, group_id, group_name, message_id,
+                    row["id"],
+                ),
+            )
+        return True
+
     def get_image(self, image_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
@@ -338,9 +471,53 @@ class Store:
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE images SET review_label=?, reviewed_at=? WHERE id=?",
-                ("" if label == "unlabeled" else label, now_iso(), image_id),
+                ("unlabeled" if label == "unlabeled" else label, now_iso(), image_id),
             )
         return cur.rowcount > 0
+
+    @staticmethod
+    def _build_image_filter(
+        *,
+        user: str = "",
+        label: str = "",
+        status: str = "",
+        q: str = "",
+        since: str = "",
+        until: str = "",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        include_missing: bool = False,
+    ) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if not include_missing:
+            clauses.append("COALESCE(stored_path, '') <> ''")
+        if user:
+            clauses.append("sender_id = ?")
+            params.append(user)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if label:
+            clauses.append("COALESCE(NULLIF(review_label,''), top_group) = ?")
+            params.append(label)
+        if q:
+            like = f"%{q}%"
+            clauses.append("(sender_id LIKE ? OR sender_name LIKE ? OR group_name LIKE ?)")
+            params.extend([like, like, like])
+        if since:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        if until:
+            clauses.append("created_at <= ?")
+            params.append(until)
+        if min_score is not None:
+            clauses.append("score IS NOT NULL AND score >= ?")
+            params.append(min_score)
+        if max_score is not None:
+            clauses.append("score IS NOT NULL AND score <= ?")
+            params.append(max_score)
+        return (" AND ".join(clauses) if clauses else "1=1"), params
 
     def list_images(
         self,
@@ -348,57 +525,194 @@ class Store:
         user: str = "",
         label: str = "",
         status: str = "",
+        q: str = "",
+        since: str = "",
+        until: str = "",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        sort: str = "created_desc",
+        include_missing: bool = False,
         limit: int = 60,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        clauses = ["1=1"]
-        params: list[Any] = []
-        if user:
-            clauses.append("sender_id = ?")
-            params.append(user)
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        if label:
-            clauses.append("COALESCE(NULLIF(review_label,''), top_group) = ?")
-            params.append(label)
-        params.extend([max(1, min(limit, 200)), max(0, offset)])
-        sql = (
-            "SELECT * FROM images WHERE " + " AND ".join(clauses) +
-            " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        where, params = self._build_image_filter(
+            user=user, label=label, status=status, q=q, since=since, until=until,
+            min_score=min_score, max_score=max_score, include_missing=include_missing,
         )
+        orders = {
+            "created_desc": "created_at DESC, rowid DESC",
+            "created_asc": "created_at ASC, rowid ASC",
+            "score_desc": "CASE WHEN score IS NULL THEN 1 ELSE 0 END ASC, score DESC, created_at DESC",
+            "score_asc": "CASE WHEN score IS NULL THEN 1 ELSE 0 END ASC, score ASC, created_at DESC",
+            "sender_asc": "sender_name ASC, created_at DESC",
+        }
+        order = orders.get(sort, orders["created_desc"])
+        params.extend([max(1, min(limit, 200)), max(0, offset)])
+        sql = f"SELECT * FROM images WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?"
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["label"] = item.get("review_label") or item.get("top_group") or "unlabeled"
+            result.append(item)
+        return result
+
+    def count_images(
+        self,
+        *,
+        user: str = "",
+        label: str = "",
+        status: str = "",
+        q: str = "",
+        since: str = "",
+        until: str = "",
+        min_score: float | None = None,
+        max_score: float | None = None,
+        include_missing: bool = False,
+    ) -> int:
+        where, params = self._build_image_filter(
+            user=user, label=label, status=status, q=q, since=since, until=until,
+            min_score=min_score, max_score=max_score, include_missing=include_missing,
+        )
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) AS n FROM images WHERE {where}", params
+            ).fetchone()
+        return int(row["n"])
+
+    def label_counts(self) -> dict[str, int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT COALESCE(NULLIF(review_label,''), top_group) AS label, COUNT(*) AS n "
+                "FROM images WHERE COALESCE(stored_path, '') <> '' GROUP BY label"
+            ).fetchall()
+        return {str(r["label"] or "unlabeled"): int(r["n"]) for r in rows}
+
+    def export_rows(
+        self,
+        *,
+        labels: list[str],
+        since: str = "",
+        until: str = "",
+        include_missing: bool = True,
+    ) -> list[dict[str, Any]]:
+        if not labels:
+            return []
+        placeholders = ",".join("?" for _ in labels)
+        clauses = [f"COALESCE(NULLIF(review_label,''), top_group) IN ({placeholders})"]
+        params: list[Any] = list(labels)
+        if not include_missing:
+            clauses.append("COALESCE(stored_path, '') <> ''")
+        if since:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        if until:
+            clauses.append("created_at <= ?")
+            params.append(until)
+        sql = "SELECT * FROM images WHERE " + " AND ".join(clauses) + " ORDER BY created_at ASC, id ASC"
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-    def count_images(self, *, user: str = "", label: str = "", status: str = "") -> int:
-        clauses = ["1=1"]
+    def ranking(
+        self,
+        *,
+        threshold: float = 0.8,
+        range_days: int = 0,
+        min_samples: int = 1,
+        sort: str = "high_count",
+        q: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Ranking over current human-confirmed collect images only.
+
+        ``score`` is the model's collect probability.  Rows with no score
+        (imported training data) are excluded from confidence denominators.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = ""
+        if range_days > 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=range_days)).isoformat(timespec="seconds")
+        clauses = [
+            "COALESCE(NULLIF(review_label,''), top_group) = 'collect'",
+            "COALESCE(stored_path, '') <> ''",
+            "status IN ('saved', 'pending')",
+            # Historical imports and private-forward legacy rows all carry
+            # a fallback node id instead of the image sender's QQ.  They are
+            # grouped by their visible nickname and marked QQ-unknown rather
+            # than being attributed to one fake account.
+        ]
         params: list[Any] = []
-        if user:
-            clauses.append("sender_id = ?")
-            params.append(user)
-        if status:
-            clauses.append("status = ?")
-            params.append(status)
-        if label:
-            clauses.append("COALESCE(NULLIF(review_label,''), top_group) = ?")
-            params.append(label)
+        if cutoff:
+            clauses.append("created_at >= ?")
+            params.append(cutoff)
+        if q:
+            like = f"%{q}%"
+            clauses.append("(sender_id LIKE ? OR sender_name LIKE ?)")
+            params.extend([like, like])
+        where = " AND ".join(clauses)
+        base = (
+            "WITH base AS ("
+            "SELECT "
+            "CASE WHEN sender_id IN ('', '1094950020') THEN 'name:' || COALESCE(sender_name, '') "
+            "ELSE 'id:' || sender_id END AS user_key, "
+            "CASE WHEN sender_id IN ('', '1094950020') THEN '' ELSE sender_id END AS sender_id, "
+            "MAX(sender_name) AS sender_name, COUNT(*) AS collect_count, "
+            "SUM(CASE WHEN score IS NOT NULL THEN 1 ELSE 0 END) AS confidence_samples, "
+            "SUM(CASE WHEN score IS NOT NULL AND score >= ? THEN 1 ELSE 0 END) AS high_count, "
+            "AVG(CASE WHEN score IS NOT NULL THEN score END) AS avg_score, "
+            "MAX(score) AS max_score, MAX(created_at) AS last_at "
+            f"FROM images WHERE {where} GROUP BY user_key)"
+        )
+        # insert threshold before where params
+        query_params: list[Any] = [threshold] + params
+        ratio = "CASE WHEN confidence_samples > 0 THEN high_count * 1.0 / confidence_samples ELSE 0 END"
+        orders = {
+            "collect_count": "collect_count DESC, high_count DESC, sender_name ASC",
+            "high_count": f"high_count DESC, {ratio} DESC, avg_score DESC, collect_count DESC, sender_name ASC",
+            "high_ratio": f"{ratio} DESC, high_count DESC, avg_score DESC, sender_name ASC",
+            "avg_score": f"avg_score DESC, high_count DESC, {ratio} DESC, sender_name ASC",
+        }
+        order = orders.get(sort, orders["high_count"])
+        min_clause = "WHERE confidence_samples >= ?" if min_samples > 0 else ""
+        count_where = " AND ".join([min_clause] if min_clause else [])
+        sql = (
+            base +
+            ", filtered AS (SELECT * FROM base " + (min_clause or "") + ") "
+            "SELECT *, " + ratio + " AS high_ratio FROM filtered "
+            "ORDER BY " + order + " LIMIT ? OFFSET ?"
+        )
+        if min_samples > 0:
+            query_params.append(max(1, min_samples))
+        query_params.extend([max(1, min(limit, 200)), max(0, offset)])
+        with self._lock:
+            rows = self._conn.execute(sql, query_params).fetchall()
+            count_sql = base + ", filtered AS (SELECT * FROM base " + (min_clause or "") + ") SELECT COUNT(*) AS n FROM filtered"
+            count_params = [threshold] + params + ([max(1, min_samples)] if min_samples > 0 else [])
+            total = int(self._conn.execute(count_sql, count_params).fetchone()["n"])
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["high_ratio"] = float(item.get("high_ratio") or 0.0)
+            item["avg_score"] = float(item["avg_score"]) if item.get("avg_score") is not None else None
+            item["max_score"] = float(item["max_score"]) if item.get("max_score") is not None else None
+            items.append(item)
+        return {"items": items, "total": total, "threshold": threshold, "min_samples": min_samples}
+
+    def legacy_unknown_senders(self) -> int:
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) AS n FROM images WHERE " + " AND ".join(clauses), params
+                "SELECT COUNT(*) AS n FROM images "
+                "WHERE COALESCE(stored_path,'')<>'' AND sender_id IN ('', '1094950020')"
             ).fetchone()
         return int(row["n"])
 
     def user_ranking(self, limit: int = 50) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT sender_id, MAX(sender_name) AS sender_name, COUNT(*) AS saved_count, "
-                "AVG(score) AS avg_score, MAX(created_at) AS last_at "
-                "FROM images WHERE status='saved' AND sender_id<>'' "
-                "GROUP BY sender_id ORDER BY saved_count DESC, avg_score DESC LIMIT ?",
-                (max(1, min(limit, 200)),),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        """Backward-compatible simple collect-only ranking."""
+        return self.ranking(limit=limit)["items"]
 
     # -- CSV -------------------------------------------------------------
     def export_csv(self) -> None:

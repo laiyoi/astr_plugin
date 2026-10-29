@@ -21,7 +21,15 @@ from urllib.parse import unquote, urlparse
 import aiohttp
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-ALLOWED_FORMATS = {"JPEG": (".jpg", "image/jpeg"), "PNG": (".png", "image/png"), "WEBP": (".webp", "image/webp")}
+# GIF/BMP are decoded to their first frame and re-encoded as JPEG.  This
+# keeps animated GIFs from becoming unbounded frame sequences.
+ALLOWED_FORMATS = {
+    "JPEG": (".jpg", "image/jpeg"),
+    "PNG": (".png", "image/png"),
+    "WEBP": (".webp", "image/webp"),
+    "GIF": (".jpg", "image/jpeg"),
+    "BMP": (".jpg", "image/jpeg"),
+}
 TRAINING_FORMATS = {
     **ALLOWED_FORMATS,
     "GIF": (".gif", "image/gif"),
@@ -138,17 +146,20 @@ class ImageFetcher:
         limit = max_bytes if max_bytes is not None else self.max_bytes
         chunks: list[bytes] = []
         total = 0
-        async with self._session.get(url, allow_redirects=True) as resp:
-            if resp.status != 200:
-                raise ImageFetchError(f"HTTP {resp.status}")
-            length = resp.content_length
-            if length and length > limit:
-                raise ImageFetchError(f"content-length {length} exceeds limit")
-            async for chunk in resp.content.iter_chunked(64 * 1024):
-                total += len(chunk)
-                if total > limit:
-                    raise ImageFetchError(f"media exceeds {limit} bytes")
-                chunks.append(chunk)
+        try:
+            async with self._session.get(url, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    raise ImageFetchError(f"HTTP {resp.status}")
+                length = resp.content_length
+                if length and length > limit:
+                    raise ImageFetchError(f"content-length {length} exceeds limit")
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    total += len(chunk)
+                    if total > limit:
+                        raise ImageFetchError(f"media exceeds {limit} bytes")
+                    chunks.append(chunk)
+        except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+            raise ImageFetchError(f"download failed: {exc}") from exc
         return b"".join(chunks)
 
     def _validate(self, path: Path) -> tuple[str, str, int, int]:
@@ -175,7 +186,7 @@ class ImageFetcher:
             raise ImageFetchError(f"unsupported format {fmt or 'unknown'}")
         if width * height > self.max_pixels:
             raise ImageFetchError(f"image pixels {width}x{height} exceed limit {self.max_pixels}")
-        if frames > 1:
+        if frames > 1 and fmt != "GIF":
             raise ImageFetchError("animated images are not supported")
         if width < self.min_side or height < self.min_side:
             raise ImageFetchError(f"image too small ({width}x{height})")
@@ -231,19 +242,26 @@ class ImageFetcher:
         tmp_dir.mkdir(parents=True, exist_ok=True)
         raw: bytes | None = None
         local: Path | None = None
+        last_error: ImageFetchError | None = None
         for value in self._candidates(image):
-            if value.startswith(("base64://", "data:")):
-                raw = _decode_base64(value, self.max_bytes)
-                break
-            if value.startswith(("http://", "https://")):
-                raw = await self._http_bytes(value)
-                break
-            candidate = _local_path(value)
-            if candidate and candidate.is_file():
-                local = candidate
-                break
+            try:
+                if value.startswith(("base64://", "data:")):
+                    raw = _decode_base64(value, self.max_bytes)
+                    break
+                if value.startswith(("http://", "https://")):
+                    raw = await self._http_bytes(value)
+                    break
+                candidate = _local_path(value)
+                if candidate and candidate.is_file():
+                    local = candidate
+                    break
+            except ImageFetchError as exc:
+                last_error = exc
+                continue
 
         if raw is None and local is None:
+            if last_error is not None:
+                raise last_error
             raise ImageFetchError("no usable image URL, base64 payload, or local path")
 
         tmp_path = tmp_dir / f"{uuid.uuid4().hex}.download"

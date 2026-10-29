@@ -41,10 +41,23 @@ def _load_json(value: Any) -> Any:
 
 def _sender(obj: dict[str, Any], fallback_id: str = "", fallback_name: str = "") -> tuple[str, str]:
     sender = obj.get("sender") if isinstance(obj.get("sender"), dict) else {}
-    return (
-        str(obj.get("user_id") or sender.get("user_id") or fallback_id or ""),
-        str(obj.get("nickname") or sender.get("nickname") or sender.get("card") or fallback_name or ""),
+    # In a forward node the top-level user_id can be the container/bot id;
+    # the actual image sender is inside ``sender``.  Prefer sender fields.
+    raw_id = (
+        sender.get("user_id") or sender.get("uin") or sender.get("qq")
+        or sender.get("uid") or sender.get("sender_id") or sender.get("senderId")
+        or obj.get("user_id") or obj.get("uin") or obj.get("qq") or obj.get("uid")
+        or obj.get("sender_id") or obj.get("senderId")
+        or fallback_id or ""
     )
+    raw_name = (
+        sender.get("nickname") or sender.get("card") or sender.get("name")
+        or sender.get("sender_name") or sender.get("senderName")
+        or obj.get("nickname") or obj.get("card") or obj.get("name")
+        or obj.get("sender_name") or obj.get("senderName")
+        or fallback_name or ""
+    )
+    return str(raw_id), str(raw_name)
 
 
 class ForwardMediaExtractor:
@@ -153,18 +166,30 @@ class ForwardMediaExtractor:
                 )
             )
         elif seg_type in {"node", "nodes"}:
-            content = data.get("content") or data.get("messages") or []
+            # OneBot forward nodes put the original sender in data.sender /
+            # data.user_id (NapCat also exposes uin/qq); do not inherit the
+            # forwarder's fallback ID for every nested image.
+            node_id2, node_name2 = _sender(
+                data if data else payload, node_id, node_name
+            )
+            content = data.get("content") or data.get("messages") or data.get("message") or []
+            if isinstance(content, dict):
+                content = content.get("message") or content.get("content") or content.get("messages") or []
             if isinstance(content, list):
                 for item in content:
-                    await self._walk_payload(item, out, depth + 1, node_id, node_name, message_id)
+                    await self._walk_payload(item, out, depth + 1, node_id2, node_name2, message_id)
         elif seg_type in {"forward", "forward_msg"}:
             content = data.get("content") or data.get("messages") or []
-            if isinstance(content, list) and content:
+            # Prefer the nested forward id. Some NapCat responses embed a
+            # content snapshot whose node sender.user_id is a bot/fallback
+            # account, while get_forward_msg can return the real senders.
+            fetch_id = data.get("id") or data.get("message_id")
+            nested = await self._fetch_forward(fetch_id) if fetch_id else []
+            if nested:
+                await self._walk_payload(nested, out, depth + 1, node_id, node_name, message_id)
+            elif isinstance(content, list) and content:
                 for item in content:
                     await self._walk_payload(item, out, depth + 1, node_id, node_name, message_id)
-            elif data.get("id") or data.get("message_id"):
-                nested = await self._fetch_forward(data.get("id") or data.get("message_id"))
-                await self._walk_payload(nested, out, depth + 1, node_id, node_name, message_id)
         elif seg_type in {"json", "xml"}:
             parsed = _load_json(data)
             if parsed is not None:
@@ -193,5 +218,4 @@ class ForwardMediaExtractor:
                     for key in ("messages", "message"):
                         if isinstance(data.get(key), list):
                             return data[key]
-        self.logger.debug("forward no payload: %s", fid)
         return []

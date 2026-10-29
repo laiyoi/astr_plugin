@@ -117,9 +117,35 @@ class CuratorPipeline:
         temp = None
         try:
             temp = await self._fetcher.fetch(job.image, self.cfg.tmp_dir)
-            if self.cfg.dedupe and self.store.find_by_sha(temp.sha256) is not None:
-                self.store.incr_meta("duplicates")
-                return
+            if self.cfg.dedupe:
+                existing = self.store.find_by_sha(temp.sha256)
+                if existing is not None:
+                    if self.store.refresh_sender_metadata(
+                        temp.sha256,
+                        sender_id=job.sender_id,
+                        sender_name=job.sender_name,
+                        group_id=job.group_id,
+                        group_name=job.group_name,
+                        message_id=job.message_id,
+                    ):
+                        self.logger.info(
+                            "重复图片已补全发送者元数据: %s -> %s",
+                            existing.get("image_id"), job.sender_id,
+                        )
+                    row = self.store.get_image(str(existing.get("image_id") or ""))
+                    if row and not row.get("review_label") and str(row.get("top_group") or "") in {"", "unlabeled"}:
+                        result = await self._classify_or_error(temp.path, "重复图片")
+                        if result is not None:
+                            self.store.update_prediction(
+                                row["id"], label=result.label, score=result.score,
+                                margin=self._margin(result), latency_ms=result.inference_ms,
+                                model=self.model.key,
+                            )
+                            self.logger.info(
+                                "重复图片已补全模型预测: %s -> %s", row["id"], result.label
+                            )
+                    self.store.incr_meta("duplicates")
+                    return
             result = await self._classify_or_error(temp.path, "图片")
             if result is None:
                 return
@@ -152,9 +178,23 @@ class CuratorPipeline:
             temp = await self._fetcher.fetch_video(
                 job.image, self.cfg.tmp_dir, max_bytes=self.cfg.max_video_bytes
             )
-            if self.cfg.dedupe and self.store.find_by_sha(temp.sha256) is not None:
-                self.store.incr_meta("duplicates")
-                return
+            if self.cfg.dedupe:
+                existing = self.store.find_by_sha(temp.sha256)
+                if existing is not None:
+                    if self.store.refresh_sender_metadata(
+                        temp.sha256,
+                        sender_id=job.sender_id,
+                        sender_name=job.sender_name,
+                        group_id=job.group_id,
+                        group_name=job.group_name,
+                        message_id=job.message_id,
+                    ):
+                        self.logger.info(
+                            "重复视频已补全发送者元数据: %s -> %s",
+                            existing.get("image_id"), job.sender_id,
+                        )
+                    self.store.incr_meta("duplicates")
+                    return
             frames = await asyncio.to_thread(
                 extract_frames,
                 temp.path,
