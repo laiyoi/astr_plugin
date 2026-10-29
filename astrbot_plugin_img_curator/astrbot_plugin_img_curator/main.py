@@ -205,6 +205,8 @@ class Main(Star):
             ("curator/labels/batch", self.api_batch_label, ["POST"]),
             ("curator/sender", self.api_set_sender, ["POST"]),
             ("curator/resolve_names", self.api_resolve_names, ["POST"]),
+            ("curator/delete", self.api_delete_images, ["POST"]),
+            ("curator/delete_skip", self.api_delete_skip, ["POST"]),
             ("curator/users", self.api_users, ["GET"]),
             ("curator/ranking", self.api_ranking, ["GET"]),
             ("curator/aliases", self.api_aliases, ["GET"]),
@@ -467,6 +469,50 @@ class Main(Star):
             if bot is not None and hasattr(bot, "call_action"):
                 return bot
         return None
+
+    def _delete_row_files(self, rows: list[dict]) -> tuple[int, int, int]:
+        removed = 0
+        failed = 0
+        total_bytes = 0
+        root = self.cfg.data_dir.resolve()
+        for row in rows:
+            path = Path(str(row.get("stored_path") or "")).resolve()
+            if not path.is_file() or root not in path.parents:
+                continue
+            try:
+                size = path.stat().st_size
+                path.unlink()
+                removed += 1
+                total_bytes += size
+            except OSError:
+                failed += 1
+        return removed, total_bytes, failed
+
+    async def api_delete_images(self):
+        body = await request.get_json() or {}
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"error": "ids must be a non-empty array"}), 400
+        if len(ids) > 1000:
+            return jsonify({"error": "最多一次删除 1000 张图片"}), 400
+        rows = [row for row in (self.store.get_image(str(i)) for i in ids) if row]
+        removed_files, total_bytes, failed_files = await asyncio.to_thread(self._delete_row_files, rows)
+        deleted = self.store.delete_images([str(i) for i in ids])
+        await asyncio.to_thread(self.store.export_csv)
+        return jsonify({
+            "ok": True, "deleted": deleted, "files_removed": removed_files,
+            "failed_files": failed_files, "size_bytes": total_bytes,
+        })
+
+    async def api_delete_skip(self):
+        rows = self.store.skip_images()
+        removed_files, total_bytes, failed_files = await asyncio.to_thread(self._delete_row_files, rows)
+        deleted = self.store.delete_images([str(row["id"]) for row in rows])
+        await asyncio.to_thread(self.store.export_csv)
+        return jsonify({
+            "ok": True, "deleted": deleted, "files_removed": removed_files,
+            "failed_files": failed_files, "size_bytes": total_bytes,
+        })
 
     async def api_resolve_names(self):
         bot = self._onebot_client()

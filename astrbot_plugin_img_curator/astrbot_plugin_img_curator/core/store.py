@@ -370,6 +370,28 @@ class Store:
             )
         return cur.rowcount > 0
 
+    def skip_images(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM images WHERE COALESCE(NULLIF(review_label,''), top_group)='skip'"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_images(self, ids: list[str]) -> int:
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            cur = self._conn.execute(
+                f"DELETE FROM images WHERE id IN ({placeholders})",
+                [str(i) for i in ids],
+            )
+            self._conn.execute(
+                f"DELETE FROM seen WHERE image_id IN ({placeholders})",
+                [str(i) for i in ids],
+            )
+        return int(cur.rowcount)
+
     def set_sender_for_images(self, ids: list[str], sender_id: str, sender_name: str) -> int:
         """Manually attribute selected images to a concrete QQ/nickname."""
         uid = (sender_id or "").strip()

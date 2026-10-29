@@ -139,7 +139,7 @@ tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
           </div>
           <select id="sort"><option value="created_desc">最新优先</option><option value="created_asc">最早优先</option><option value="score_desc">置信度从高到低</option><option value="score_asc">置信度从低到高</option><option value="sender_asc">按用户</option></select>
           <button class="btn ghost" id="toggleFilters">更多筛选</button>
-          <button class="btn ghost" id="clearFilters">清除</button>
+          <button class="btn ghost" id="clearFilters">清除</button><button class="btn danger" id="deleteSkip">删除全部 skip</button>
         </div>
         <div id="advanced" style="display:none;margin-bottom:14px">
           <div class="card-panel" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
@@ -204,7 +204,7 @@ tr.clickable{cursor:pointer}tr.clickable:hover td{background:var(--panel2)}
     </main>
   </div>
 </div>
-<div class="batchbar" id="batchbar"><b id="batchCount">已选择 0 张</b><button class="btn sm" data-batch="collect">设为 collect</button><button class="btn sm" data-batch="suspicious">设为 suspicious</button><button class="btn sm danger" data-batch="skip">设为 skip</button><button class="btn sm" id="batchSender">指定发送者</button><button class="btn sm ghost" id="clearSelection">清空选择</button></div>
+<div class="batchbar" id="batchbar"><b id="batchCount">已选择 0 张</b><button class="btn sm" data-batch="collect">设为 collect</button><button class="btn sm" data-batch="suspicious">设为 suspicious</button><button class="btn sm danger" data-batch="skip">设为 skip</button><button class="btn sm" id="batchSender">指定发送者</button><button class="btn sm danger" id="batchDelete">删除所选</button><button class="btn sm ghost" id="clearSelection">清空选择</button></div>
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="modal-card"><div class="modal-head"><h3 id="modalTitle">确认</h3><button class="btn ghost" data-close="modal">✕</button></div><div class="modal-body" id="modalBody"></div><div class="modal-foot" id="modalFoot"></div></div></div>
 <div class="review" id="review"><div class="review-top"><button class="btn sm" id="closeReview">退出审核</button><span id="reviewProgress"></span><span class="review-meta" id="reviewMeta"></span></div><div class="review-stage"><img id="reviewImg" alt=""></div><div class="review-foot"><button class="btn" data-review-label="collect">1 · collect</button><button class="btn" data-review-label="suspicious">2 · suspicious</button><button class="btn danger" data-review-label="skip">3 · skip</button><span class="review-hint">← → 切换 · Esc 退出</span></div></div>
@@ -241,7 +241,7 @@ function renderGrid(){
    <div class="card-main"><div class="card-top"><span class="pill ${it.label||'unlabeled'}">${esc(it.label||'unlabeled')}</span><span class="score">置信 <b>${scoreText(it.score)}</b></span></div>
    <div class="uname" title="${esc(it.sender_name||it.sender_id||'')}">${esc(it.sender_name||'未知用户')}</div>
    <div class="umeta">${esc(it.sender_id||'QQ 未记录')} · ${fmtDate(it.created_at)}</div></div>
-   <div class="card-actions">${['collect','suspicious','skip'].map(l=>`<button class="btn sm" data-set="${l}" data-id="${it.id}">${l}</button>`).join('')}</div>
+   <div class="card-actions">${['collect','suspicious','skip'].map(l=>`<button class="btn sm" data-set="${l}" data-id="${it.id}">${l}</button>`).join('')}<button class="btn sm danger" data-delete="${it.id}" title="删除图片">删除</button></div>
  </article>`).join('');
  $('resultCount').textContent=`${S.total} 张图片`;
  updateBatchbar();
@@ -327,6 +327,16 @@ async function refreshSummary(){
  try{const d=await apiGet('curator/export/summary',p);exportLabelRows(d.counts);$('exportTotal').textContent=d.total.toLocaleString()+' 张';$('exportSize').textContent=`约 ${fmtBytes(d.size_bytes)}${d.missing?' · '+d.missing+' 张缺失':''}${d.duplicates?' · '+d.duplicates+' 张重复':''}`;$('exportLines').innerHTML=Object.entries(d.counts).map(([k,v])=>`<div class="line"><span>${k}</span><b>${v.toLocaleString()} 张</b></div>`).join('')}catch(e){$('exportTotal').textContent='—';$('exportSize').textContent='统计失败：'+e.message}
 }
 async function doExport(){const labels=[...S.exportLabels];if(!labels.length){toast('请至少选择一个标注','err');return}$('exportBtn').disabled=true;const old=$('exportBtn').textContent;$('exportBtn').textContent='正在打包…';try{await V.download('curator/export',{labels:labels.join(','),dedupe:$('exportDedupe').checked?1:0,include_missing:$('exportMissing').checked?0:1,since:$('exportSince').value?$('exportSince').value+'T00:00:00':'',until:$('exportUntil').value?$('exportUntil').value+'T23:59:59':''},'dataset.zip');toast('数据集 ZIP 已开始下载','ok')}catch(e){toast('导出失败：'+e.message,'err')}finally{$('exportBtn').disabled=false;$('exportBtn').textContent=old}}
+async function deleteImages(ids, label='图片'){
+ if(!ids.length)return;
+ const count=ids.length;const ok=await confirmDialog('删除图片',`确定删除 <b>${count}</b> 张${label}？图片文件和数据库记录都会被删除，此操作不可撤销。`);if(!ok)return;
+ try{const r=await apiPost('curator/delete',{ids});ids.forEach(id=>S.selected.delete(id));toast(`已删除 ${r.deleted} 条记录，清理 ${r.files_removed} 个文件`,'ok');await loadImages()}catch(e){toast('删除失败：'+e.message,'err')}
+}
+async function deleteAllSkip(){
+ const ok=await confirmDialog('删除全部 skip','确定删除所有最终标注为 <b>skip</b> 的图片吗？文件和数据库记录都会删除，无法恢复。');if(!ok)return;
+ $('deleteSkip').disabled=true;
+ try{const r=await apiPost('curator/delete_skip',{});toast(`已删除 ${r.deleted} 条 skip 记录，清理 ${r.files_removed} 个文件`,'ok');await loadImages()}catch(e){toast('删除失败：'+e.message,'err')}finally{$('deleteSkip').disabled=false}
+}
 // aliases
 let aliasCache=[];
 async function loadAliases(){
@@ -365,11 +375,12 @@ $('search').addEventListener('input',(()=>{let t;return e=>{clearTimeout(t);t=se
 $('toggleFilters').onclick=()=>{const a=$('advanced');a.style.display=a.style.display==='none'?'block':'none'};
 $('applyFilters').onclick=()=>{S.filters.since=$('since').value?$('since').value+'T00:00:00':'';S.filters.until=$('until').value?$('until').value+'T23:59:59':'';S.filters.min_score=$('minScore').value;S.filters.max_score=$('maxScore').value;S.filters.status=$('status').value;S.offset=0;loadImages()};
 $('clearFilters').onclick=()=>{S.filters={q:'',label:'',status:'',since:'',until:'',min_score:'',max_score:'',sort:'created_desc'};S.offset=0;$('search').value='';$('since').value='';$('until').value='';$('minScore').value='';$('maxScore').value='';$('status').value='';document.querySelectorAll('#labelSeg button').forEach((b,i)=>b.classList.toggle('active',i===0));loadImages()};
-$('grid').addEventListener('click',e=>{const sel=e.target.closest('[data-select]');if(sel){const id=sel.dataset.select;S.selected.has(id)?S.selected.delete(id):S.selected.add(id);updateBatchbar();return}const set=e.target.closest('[data-set]');if(set){const it=S.items.find(x=>x.id===set.dataset.id);if(it)setOne(it,set.dataset.set);return}const pv=e.target.closest('[data-preview]');if(pv)preview(pv.dataset.preview)});
+$('grid').addEventListener('click',e=>{const sel=e.target.closest('[data-select]');if(sel){const id=sel.dataset.select;S.selected.has(id)?S.selected.delete(id):S.selected.add(id);updateBatchbar();return}const set=e.target.closest('[data-set]');if(set){const it=S.items.find(x=>x.id===set.dataset.id);if(it)setOne(it,set.dataset.set);return}const del=e.target.closest('[data-delete]');if(del){deleteImages([del.dataset.delete]);return}const pv=e.target.closest('[data-preview]');if(pv)preview(pv.dataset.preview)});
 function jumpPage(){const input=$('jumpPage');if(!input)return;const pages=Math.max(1,Math.ceil(S.total/S.limit));const page=Math.max(1,Math.min(pages,Number(input.value)||1));S.offset=(page-1)*S.limit;loadImages();window.scrollTo({top:0,behavior:'smooth'})}
 $('pager').addEventListener('click',e=>{if(e.target.id==='jumpBtn'){jumpPage();return}const b=e.target.closest('[data-page]');if(!b||b.disabled)return;S.offset=(Number(b.dataset.page)-1)*S.limit;loadImages();window.scrollTo({top:0,behavior:'smooth'})});
 $('pager').addEventListener('keydown',e=>{if(e.target.id==='jumpPage'&&e.key==='Enter')jumpPage()});
-$('batchbar').addEventListener('click',e=>{if(e.target.id==='batchSender'){openSenderDialog();return}const b=e.target.closest('[data-batch]');if(b)batchSet(b.dataset.batch);if(e.target.id==='clearSelection'){S.selected.clear();updateBatchbar()}});
+$('batchbar').addEventListener('click',e=>{if(e.target.id==='batchSender'){openSenderDialog();return}if(e.target.id==='batchDelete'){deleteImages([...S.selected]);return}const b=e.target.closest('[data-batch]');if(b)batchSet(b.dataset.batch);if(e.target.id==='clearSelection'){S.selected.clear();updateBatchbar()}});
+$('deleteSkip').onclick=deleteAllSkip;
 $('selectPage').onclick=()=>{S.items.forEach(it=>S.selected.add(it.id));updateBatchbar()};
 $('reviewBtn').onclick=startReview;$('closeReview').onclick=closeReview;$('review').addEventListener('click',e=>{const b=e.target.closest('[data-review-label]');if(b)reviewSet(b.dataset.reviewLabel)});
 document.addEventListener('keydown',e=>{if($('review').classList.contains('show')){if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))return;if(e.key==='Escape'){closeReview()}else if(e.key==='1'){reviewSet('collect')}else if(e.key==='2'){reviewSet('suspicious')}else if(e.key==='3'){reviewSet('skip')}else if(e.key==='ArrowLeft'){S.reviewIdx=Math.max(0,S.reviewIdx-1);renderReview()}else if(e.key==='ArrowRight'){S.reviewIdx=Math.min(S.items.length-1,S.reviewIdx+1);renderReview()}e.preventDefault();return}if(e.key==='Escape'){closeModal();$('sidebar').classList.remove('open')}});
