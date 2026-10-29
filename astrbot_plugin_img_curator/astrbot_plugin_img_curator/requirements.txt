@@ -1,9 +1,5 @@
-# Runtime dependencies for the AstrBot image curator plugin.
-# Deliberately no torch/torchvision: ONNX Runtime CPU is the only inference
-# runtime.  AstrBot already ships aiohttp, Pillow and numpy, but they are
-# declared here so a minimal installation also works.
-onnxruntime>=1.18,<2
-tokenizers>=0.20,<1
+# Runtime dependencies for the AstrBot plugin. No torch/torchvision.
+onnxruntime>=1.20,<2
+numpy>=1.26,<3
 Pillow>=10.0
-numpy>=1.24
-aiohttp>=3.8
+huggingface_hub>=0.24

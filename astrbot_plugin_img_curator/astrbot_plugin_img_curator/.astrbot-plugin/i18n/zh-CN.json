@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "display_name": "Femboy Detector 收藏",
+    "short_desc": "DINOv2 三分类收藏 + 合并记录 + 数据集审核",
+    "desc": "使用 laiyoi/femboydetector 收藏群图片/短视频，解析合并聊天记录，并在 AstrBot 管理界面中浏览、纠正标签和导出训练集。"
+  },
+  "pages": {
+    "curator": {
+      "title": "收藏数据集"
+    }
+  }
+}

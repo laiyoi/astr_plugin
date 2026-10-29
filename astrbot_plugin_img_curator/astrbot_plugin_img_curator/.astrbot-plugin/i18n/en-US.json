@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "display_name": "Femboy Detector Collector",
+    "short_desc": "DINOv2 three-class collection + merged records + dataset review",
+    "desc": "Collect group images/videos with laiyoi/femboydetector, parse merged chat records, and review/export the dataset from the AstrBot dashboard."
+  },
+  "pages": {
+    "curator": {
+      "title": "Collected Dataset"
+    }
+  }
+}

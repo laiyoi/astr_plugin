@@ -326,6 +326,80 @@ class Store:
             "max_ms": values[-1],
         }
 
+    # -- web / review ----------------------------------------------------
+    def get_image(self, image_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
+        return dict(row) if row else None
+
+    def set_review_label(self, image_id: str, label: str) -> bool:
+        if label not in {"collect", "skip", "suspicious", "unlabeled"}:
+            raise ValueError("invalid label")
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE images SET review_label=?, reviewed_at=? WHERE id=?",
+                ("" if label == "unlabeled" else label, now_iso(), image_id),
+            )
+        return cur.rowcount > 0
+
+    def list_images(
+        self,
+        *,
+        user: str = "",
+        label: str = "",
+        status: str = "",
+        limit: int = 60,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if user:
+            clauses.append("sender_id = ?")
+            params.append(user)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if label:
+            clauses.append("COALESCE(NULLIF(review_label,''), top_group) = ?")
+            params.append(label)
+        params.extend([max(1, min(limit, 200)), max(0, offset)])
+        sql = (
+            "SELECT * FROM images WHERE " + " AND ".join(clauses) +
+            " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_images(self, *, user: str = "", label: str = "", status: str = "") -> int:
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if user:
+            clauses.append("sender_id = ?")
+            params.append(user)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if label:
+            clauses.append("COALESCE(NULLIF(review_label,''), top_group) = ?")
+            params.append(label)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM images WHERE " + " AND ".join(clauses), params
+            ).fetchone()
+        return int(row["n"])
+
+    def user_ranking(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT sender_id, MAX(sender_name) AS sender_name, COUNT(*) AS saved_count, "
+                "AVG(score) AS avg_score, MAX(created_at) AS last_at "
+                "FROM images WHERE status='saved' AND sender_id<>'' "
+                "GROUP BY sender_id ORDER BY saved_count DESC, avg_score DESC LIMIT ?",
+                (max(1, min(limit, 200)),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # -- CSV -------------------------------------------------------------
     def export_csv(self) -> None:
         with self._lock:

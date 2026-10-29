@@ -1,37 +1,31 @@
 name: astrbot_plugin_img_curator
-display_name: 本地图片筛选收藏
+display_name: Femboy Detector 收藏
 author: local
 author_url: ""
-desc: 在 CPU 上用本地 ONNX 视觉模型筛选群图片/短视频，收藏高置信度候选；不确定图片进入人工确认。图片以 UUID 命名，元数据写入 CSV/SQLite。短视频抽帧后只保存最佳帧。无云端 API、无 GPU、无群号白名单。
-short_desc: 本地 ONNX 图片筛选收藏，UUID 命名 + CSV 元数据。
+desc: 使用 laiyoi/femboydetector DINOv2 三分类 ONNX 模型收藏群图片/短视频；自动解析合并聊天记录；提供本地网页浏览、纠正标签、按用户筛选和导出训练集。无云端视觉 API、无 PyTorch。
+short_desc: DINOv2 三分类收藏 + 合并记录 + 本地审核网页。
 repo: ""
 category: 娱乐
 tags:
   - 图片
   - 收藏
   - ONNX
-  - CPU
+  - DINOv2
   - 本地模型
   - 群聊
   - 人工审核
 help: |
-  本地图片筛选收藏（仅管理员命令）：
-  /imgfilter status          查看运行状态与计数
-  /imgfilter model [load]    查看/加载模型
-  /imgfilter stats           查看耗时统计
-  /imgfilter pending         查看待确认图片
-  /imgfilter pause|resume    暂停/恢复识别
-  /imgfilter test            测试当前附带图片/短视频（不保存）
-  /imgfilter forward [分钟]  开始接收当前群/私聊的合并聊天记录，图片存为训练集（unlabeled）
-  /imgfilter forward_status  查看合并记录采集状态
-  /imgfilter forward_cancel  停止当前会话采集
-  /imgfilter confirm <ID>    将待确认图片移入收藏
-  /imgfilter reject <ID>     删除待确认图片并标记负样本
+  /imgfilter status          状态、模型、Web UI 地址
+  /imgfilter model [load]    查看/加载 laiyoi/femboydetector
+  /imgfilter stats           统计
+  /imgfilter pending         查看缓存
+  /imgfilter pause|resume    暂停/恢复
+  /imgfilter test            测试当前图片/视频（不保存）
+  /imgfilter confirm|reject <ID前缀>
 
-  图片保存为 <UUID>.<jpg|png|webp>，不再按日期/群号分目录。
-  metadata.csv 记录发送者昵称、QQ、群名、群号、分数与耗时。
-  首次启用会自动下载约 153 MB 的 ONNX 模型，之后完全离线。
-version: 1.0.0
+  群图片、视频和合并聊天记录会自动处理；私聊处理合并记录。
+  在 AstrBot 管理界面的插件“可视化视图”中浏览、纠正标签、按用户导出。
+version: 2.0.0
 support_platforms:
   - aiocqhttp
 astrbot_version: ">=4.24.1"

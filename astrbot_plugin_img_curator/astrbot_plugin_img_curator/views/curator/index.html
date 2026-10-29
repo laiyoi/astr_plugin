@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Femboy Detector Dataset</title>
+<style>
+body{margin:0;background:#101216;color:#e8edf5;font:14px system-ui,sans-serif}
+header{padding:16px 22px;border-bottom:1px solid #29303b;display:flex;gap:16px;align-items:baseline}
+h1{font-size:19px;margin:0}.muted{color:#8c98aa}main{padding:18px 22px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+input,select,button{background:#1a2029;color:#e8edf5;border:1px solid #354052;border-radius:7px;padding:7px 9px}
+button{cursor:pointer}button:hover{background:#243044}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:13px}
+.card{background:#171d25;border:1px solid #2b3543;border-radius:10px;overflow:hidden}
+.card img{width:100%;height:170px;object-fit:contain;background:#0b0e12}
+.meta{padding:8px 10px;font-size:12px;line-height:1.5}.tag{color:#7fd39b}.score{color:#ffcc75}
+.actions{display:flex;gap:5px;padding:0 10px 10px;flex-wrap:wrap}.actions button{padding:4px 7px;font-size:11px}
+table{width:100%;border-collapse:collapse;margin-top:10px}td,th{padding:6px;border-bottom:1px solid #29303b;text-align:left}th{color:#8c98aa}
+h2{font-size:15px;margin-top:22px;color:#cbd5e1}.empty{color:#8c98aa;padding:20px}
+</style></head>
+<body><header><h1>Femboy Detector Dataset</h1><span class="muted" id="count"></span></header>
+<main>
+<div class="bar">
+<input id="user" placeholder="按 QQ / 用户筛选" size="18">
+<select id="label"><option value="">全部标签</option><option>collect</option><option>suspicious</option><option>skip</option><option>unlabeled</option></select>
+<select id="status"><option value="">全部状态</option><option>saved</option><option>pending</option><option>rejected</option></select>
+<button id="refresh">刷新</button>
+<button id="export">导出当前筛选</button>
+</div>
+<div id="grid" class="grid"><div class="empty">加载中…</div></div>
+<h2>发布者排行（已保存数量 / 平均分）</h2>
+<table><thead><tr><th>QQ</th><th>昵称</th><th>已保存</th><th>平均分</th><th>最近</th></tr></thead><tbody id="users"></tbody></table>
+</main>
+<script src="/api/plugin/page/bridge-sdk.js"></script>
+<script>
+const V=window.AstrBotPluginView || window.AstrBotPluginPage;
+const $=id=>document.getElementById(id);
+function params(){const p={};for(const k of ['user','label','status']){const v=$(k).value.trim();if(v)p[k]=v}return p}
+function classButtons(id){return ['collect','suspicious','skip','unlabeled'].map(l=>`<button data-id="${id}" data-label="${l}">${l}</button>`).join('')}
+let items=[];
+async function loadImages(){
+  const p=params(); $('grid').innerHTML='<div class="empty">加载中…</div>';
+  try{
+    const d=await V.apiGet('curator/images',p); items=d.items||[];
+    $('count').textContent=(d.total??items.length)+' 张';
+    if(!items.length){$('grid').innerHTML='<div class="empty">没有匹配图片</div>';return}
+    $('grid').innerHTML=items.map(x=>`<div class="card"><img id="img-${x.id}" alt=""><div class="meta"><span class="tag">${x.label}</span> · <span class="score">${Number(x.score||0).toFixed(3)}</span><br>${x.sender_name||'?'} / ${x.sender_id||'?'}<br>${x.group_name||'私聊'} · ${x.created_at||''}</div><div class="actions">${classButtons(x.id)}</div></div>`).join('');
+    for(const x of items){
+      try{const r=await V.apiGet('curator/image/'+encodeURIComponent(x.id)); const img=$('img-'+x.id); if(img&&r.data_url) img.src=r.data_url}catch(e){console.warn(e)}
+    }
+  }catch(e){$('grid').innerHTML='<div class="empty">加载失败：'+e.message+'</div>'}
+}
+async function loadUsers(){
+  try{const d=await V.apiGet('curator/users');$('users').innerHTML=(d.items||[]).map(x=>`<tr><td>${x.sender_id}</td><td>${x.sender_name||''}</td><td>${x.saved_count}</td><td>${Number(x.avg_score||0).toFixed(3)}</td><td>${x.last_at||''}</td></tr>`).join('')}catch(e){console.warn(e)}
+}
+document.addEventListener('click',async e=>{
+  if(e.target.id==='refresh'){loadImages();loadUsers()}
+  else if(e.target.id==='export'){V.download('curator/export',params(),'training_dataset.zip')}
+  else if(e.target.dataset.id&&e.target.dataset.label){await V.apiPost('curator/label',{id:e.target.dataset.id,label:e.target.dataset.label});loadImages()}
+});
+V.ready().then(()=>{loadImages();loadUsers()});
+</script></body></html>
