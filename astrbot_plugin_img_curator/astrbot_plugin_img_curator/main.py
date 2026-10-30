@@ -70,6 +70,7 @@ class Main(Star):
         self.rate_limiter = GroupRateLimiter(self.cfg.rate_limit_count, self.cfg.rate_limit_window_sec)
         self._group_cache: dict[str, tuple[float, str]] = {}
         self._warm_task: asyncio.Task | None = None
+        self._model_watch_task: asyncio.Task | None = None
         self._stopping = False
         self.logger.info(
             "插件已初始化: %s | 保存目录 %s | 模型 %s",
@@ -83,18 +84,24 @@ class Main(Star):
         self._register_web_apis()
         if self.cfg.recognition_enabled:
             self._warm_task = asyncio.create_task(self._warm_model(), name="img-curator-warmup")
+            if self.cfg.auto_update_model:
+                self._model_watch_task = asyncio.create_task(
+                    self._watch_model(), name="img-curator-model-watch"
+                )
         else:
             self.logger.info("识别未启用，不加载模型")
 
     async def terminate(self) -> None:
         self._stopping = True
-        if self._warm_task:
-            self._warm_task.cancel()
-            try:
-                await self._warm_task
-            except asyncio.CancelledError:
-                pass
-            self._warm_task = None
+        for task in (self._warm_task, self._model_watch_task):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._warm_task = None
+        self._model_watch_task = None
         await self.pipeline.stop()
         # AstrBot may still have an in-flight listener from the about-to-be
         # replaced instance.  Do not close SQLite underneath it immediately.
@@ -111,6 +118,19 @@ class Main(Star):
             raise
         except Exception as exc:  # noqa: BLE001
             self.logger.error("模型预热失败: %s", exc)
+
+    async def _watch_model(self) -> None:
+        await asyncio.sleep(15)
+        while not self._stopping:
+            try:
+                changed = await self.model.update()
+                if changed:
+                    self.logger.info("检测到模型更新并已切换")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("模型自动更新检查失败: %s", exc)
+            await asyncio.sleep(self.cfg.model_update_interval_sec)
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
@@ -451,6 +471,7 @@ class Main(Star):
             item["avatar_url"] = (
                 f"https://q1.qlogo.cn/g?b=qq&nk={uid}&s=100" if uid.isdigit() and len(uid) >= 5 else ""
             )
+            item["groups"] = self.store.groups_for_identity(uid, str(item.get("sender_name") or ""))
         result.update({
             "range_days": range_days, "sort": sort, "limit": limit, "offset": offset,
             "legacy_unknown": self.store.legacy_unknown_senders(),
@@ -742,7 +763,15 @@ class Main(Star):
     @imgfilter.command("model")
     async def cmd_model(self, event: AstrMessageEvent, action: str = ""):
         event.stop_event()
-        if action.strip().lower() in {"load", "reload", "加载"}:
+        act = action.strip().lower()
+        if act in {"update", "pull", "更新"}:
+            try:
+                changed = await self.model.update(force=True)
+                yield event.plain_result("模型已更新。" if changed else "模型已是最新版本。")
+            except Exception as exc:  # noqa: BLE001
+                yield event.plain_result(f"模型更新失败：{exc}")
+            return
+        if act in {"load", "reload", "加载"}:
             try:
                 await self.model.ensure_ready()
             except Exception as exc:  # noqa: BLE001
@@ -754,7 +783,9 @@ class Main(Star):
             f"仓库：{ms['repo']} | 文件：{ms['files_present']}/{ms['files_expected']}\n"
             f"目录：{ms['dir']}\n"
             f"加载：{ms['load_ms']} ms | 类别：{', '.join(ms['class_names']) or '未加载'}\n"
-            f"错误：{ms['error'] or '无'}"
+            f"自动更新：{'开' if ms.get('auto_update') else '关'} | revision {ms.get('revision')}\n"
+            f"最近检查：{ms.get('last_check') or '—'} | 最近更新：{ms.get('last_update') or '—'}\n"
+            f"错误：{ms['error'] or '—'} | 更新错误：{ms.get('update_error') or '—'}"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)

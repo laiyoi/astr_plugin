@@ -53,7 +53,7 @@ HF repo: laiyoi/femboydetector
 类别: ["skip","suspicious","collect"]
 ```
 
-公共仓库会自动下载模型到插件数据目录的 `models/femboydetector/`。
+公共仓库会自动下载模型到插件数据目录的 `models/femboydetector/`。插件会按 `model_update_interval_sec` 自动检查更新并热切换；管理员也可以执行 `/imgfilter model update` 手动拉取。私有仓库需要在运行环境中设置 `HF_TOKEN`。
 
 ## 网页
 

@@ -60,6 +60,9 @@ class PluginConfig:
     hf_repo_id: str
     hf_model_filename: str
     hf_config_filename: str
+    hf_revision: str
+    auto_update_model: bool
+    model_update_interval_sec: int
     download_timeout_sec: int
     suspicious_save_at: int
     suspicious_cache_below: int
@@ -107,6 +110,9 @@ class PluginConfig:
             hf_repo_id=str(raw.get("hf_repo_id", "laiyoi/femboydetector") or "laiyoi/femboydetector").strip(),
             hf_model_filename=str(raw.get("hf_model_filename", "taste_classifier.onnx") or "taste_classifier.onnx").strip(),
             hf_config_filename=str(raw.get("hf_config_filename", "model_config.json") or "model_config.json").strip(),
+            hf_revision=str(raw.get("hf_revision", "main") or "main").strip(),
+            auto_update_model=_bool(raw, "auto_update_model", True),
+            model_update_interval_sec=_int(raw, "model_update_interval_sec", 21600, 300, 30 * 24 * 3600),
             download_timeout_sec=_int(raw, "download_timeout_sec", 600, 10, 3600),
             suspicious_save_at=_int(raw, "suspicious_save_at", 5, 1, 1000),
             suspicious_cache_below=_int(raw, "suspicious_cache_below", 3, 0, 1000),

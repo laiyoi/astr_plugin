@@ -24,6 +24,22 @@
     "type": "string",
     "default": "model_config.json"
   },
+  "hf_revision": {
+    "description": "HF revision/分支",
+    "type": "string",
+    "default": "main"
+  },
+  "auto_update_model": {
+    "description": "自动检查并拉取模型更新",
+    "type": "bool",
+    "default": true
+  },
+  "model_update_interval_sec": {
+    "description": "自动检查模型更新间隔（秒）",
+    "type": "int",
+    "default": 21600,
+    "min": 300
+  },
   "suspicious_save_at": {
     "description": "suspicious：发布者已保存至少多少张时保存",
     "type": "int",

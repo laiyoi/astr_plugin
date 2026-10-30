@@ -431,7 +431,7 @@ class Store:
         """Persist a user's group membership and group-specific display name."""
         uid = str(sender_id or "").strip()
         gid = str(group_id or "").strip()
-        if not uid or not gid:
+        if not uid or gid == "" or uid == "0":
             return
         now = now_iso()
         with self._lock:
@@ -526,6 +526,26 @@ class Store:
             "items": items,
             "aliases": [dict(r) for r in aliases],
         }
+
+    def groups_for_identity(self, sender_id: str = "", nickname: str = "") -> list[dict[str, Any]]:
+        uid = str(sender_id or "").strip()
+        name = str(nickname or "").strip()
+        with self._lock:
+            if uid:
+                rows = self._conn.execute(
+                    "SELECT group_id, group_name, nickname, card, last_seen FROM group_members "
+                    "WHERE sender_id=? ORDER BY last_seen DESC LIMIT 20",
+                    (uid,),
+                ).fetchall()
+            elif name:
+                rows = self._conn.execute(
+                    "SELECT group_id, group_name, nickname, card, last_seen FROM group_members "
+                    "WHERE card=? OR nickname=? ORDER BY last_seen DESC LIMIT 20",
+                    (name, name),
+                ).fetchall()
+            else:
+                rows = []
+        return [dict(r) for r in rows]
 
     def users_missing_nickname(self, limit: int = 200) -> list[str]:
         with self._lock:
