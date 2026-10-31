@@ -36,10 +36,26 @@ def _path(raw: dict[str, Any], key: str, default: Path) -> Path:
     return Path(os.path.expanduser(value)).resolve() if value else default
 
 
+def _id_list(raw: dict[str, Any], key: str) -> list[str]:
+    value = raw.get(key, [])
+    if isinstance(value, str):
+        value = value.replace("，", ",").split(",")
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    result = []
+    for item in value:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
 @dataclass
 class PluginConfig:
     enabled: bool
     recognition_enabled: bool
+    group_whitelist: list[str]
+    group_blacklist: list[str]
     save_pending: bool
     dedupe: bool
     strip_metadata: bool
@@ -90,6 +106,8 @@ class PluginConfig:
         return cls(
             enabled=_bool(raw, "enabled", True),
             recognition_enabled=_bool(raw, "recognition_enabled", True),
+            group_whitelist=_id_list(raw, "group_whitelist"),
+            group_blacklist=_id_list(raw, "group_blacklist"),
             save_pending=_bool(raw, "save_pending", True),
             dedupe=_bool(raw, "dedupe", True),
             strip_metadata=_bool(raw, "strip_metadata", True),
@@ -125,6 +143,16 @@ class PluginConfig:
             db_path=_path(raw, "db_path", data_dir / "state.sqlite3"),
             csv_path=_path(raw, "csv_path", data_dir / "metadata.csv"),
         )
+
+    def group_allowed(self, group_id: str) -> bool:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        if gid in self.group_blacklist:
+            return False
+        if self.group_whitelist and gid not in self.group_whitelist:
+            return False
+        return True
 
     def ensure_directories(self) -> None:
         for path in (self.data_dir, self.save_dir, self.pending_dir, self.skip_dir, self.tmp_dir, self.model_dir):

@@ -142,7 +142,7 @@ class Main(Star):
         if event.get_self_id() and event.get_sender_id() == event.get_self_id():
             return
         group_id = str(event.get_group_id() or "")
-        if not group_id:
+        if not group_id or not self.cfg.group_allowed(group_id):
             return
         group_name = await self._resolve_group_name(event, group_id)
         self._record_group_member(event, group_id, group_name)

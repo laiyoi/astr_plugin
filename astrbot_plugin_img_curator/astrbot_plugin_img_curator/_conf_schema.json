@@ -9,6 +9,16 @@
     "type": "bool",
     "default": true
   },
+  "group_whitelist": {
+    "description": "群聊白名单（非空时只接收这些群，填群号）",
+    "type": "list",
+    "default": []
+  },
+  "group_blacklist": {
+    "description": "群聊黑名单（永不接收这些群，填群号）",
+    "type": "list",
+    "default": []
+  },
   "hf_repo_id": {
     "description": "Hugging Face 模型仓库",
     "type": "string",
