@@ -19,6 +19,11 @@
     "type": "list",
     "default": []
   },
+  "forward_to_qq": {
+    "description": "自动转发收藏图片到的 QQ 号（留空关闭）",
+    "type": "string",
+    "default": ""
+  },
   "hf_repo_id": {
     "description": "Hugging Face 模型仓库",
     "type": "string",

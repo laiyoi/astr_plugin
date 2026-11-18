@@ -3,6 +3,7 @@
   "recognition_enabled": true,
   "group_whitelist": [],
   "group_blacklist": [],
+  "forward_to_qq": "",
   "hf_repo_id": "laiyoi/femboydetector",
   "hf_model_filename": "taste_classifier.onnx",
   "hf_config_filename": "model_config.json",

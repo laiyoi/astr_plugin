@@ -65,8 +65,13 @@ class Main(Star):
         self.cfg = PluginConfig.load(dict(config or {}), Path(data_dir) if data_dir else StarTools.get_data_dir(PLUGIN_NAME))
         self.cfg.ensure_directories()
         self.store = Store(self.cfg.db_path, self.cfg.csv_path)
+        self.forward_to_qq = self.store.get_meta("forward_to_qq", self.cfg.forward_to_qq)
+        if self.forward_to_qq and (not str(self.forward_to_qq).isdigit() or not (5 <= len(str(self.forward_to_qq)) <= 20)):
+            self.logger.warning("忽略无效的 forward_to_qq: %s", self.forward_to_qq)
+            self.forward_to_qq = ""
         self.model = TasteOnnxModel(self.cfg, self.logger)
         self.pipeline = CuratorPipeline(self.cfg, self.store, self.model, self.logger)
+        self.pipeline.on_saved = self._forward_saved
         self.rate_limiter = GroupRateLimiter(self.cfg.rate_limit_count, self.cfg.rate_limit_window_sec)
         self._group_cache: dict[str, tuple[float, str]] = {}
         self._warm_task: asyncio.Task | None = None
@@ -705,6 +710,19 @@ class Main(Star):
         await asyncio.sleep(600)
         path.unlink(missing_ok=True)
 
+    async def _forward_saved(self, job, path: Path, record: dict) -> None:
+        target = str(self.forward_to_qq or "").strip()
+        if not target:
+            return
+        bot = self._onebot_client()
+        if bot is None:
+            self.logger.warning("自动转发失败：没有可用的 OneBot 适配器")
+            return
+        media_type = "video" if record.get("source_type") == "video" else "image"
+        message = [{"type": media_type, "data": {"file": Path(path).as_uri()}}]
+        await bot.call_action("send_private_msg", user_id=int(target), message=message)
+        self.logger.info("已自动转发收藏%s到 QQ %s", media_type, target)
+
     def _record_group_member(self, event: AstrMessageEvent, group_id: str, group_name: str) -> None:
         sender_id = str(event.get_sender_id() or "")
         raw = getattr(event.message_obj, "raw_message", None)
@@ -755,6 +773,7 @@ class Main(Star):
             f"图片筛选：{state} | 识别：{'开' if self.cfg.recognition_enabled else '关'}\n"
             f"队列：{snap['queue']}/{snap['queue_capacity']}\n"
             f"模型：{ms['model']} [{ms['state']}] {ms['weights_mb']} MB\n"
+            f"自动转发：{self.forward_to_qq or '关闭'}\n"
             f"审核/导出：AstrBot 管理界面 → 插件 → 可视化视图\n"
             f"目录：{self.cfg.save_dir}"
         )
@@ -867,6 +886,24 @@ class Main(Star):
         yield event.plain_result(self._do_review(image_id, False))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @imgfilter.command("forward_to")
+    async def cmd_forward_to(self, event: AstrMessageEvent, target: str = ""):
+        """设置自动转发收藏图片的 QQ；输入 off 关闭。"""
+        event.stop_event()
+        value = (target or "").strip()
+        if value.lower() in {"off", "none", "0", "关闭", ""}:
+            self.forward_to_qq = ""
+            self.store.set_meta("forward_to_qq", "")
+            yield event.plain_result("已关闭收藏图片自动转发。")
+            return
+        if not value.isdigit() or not (5 <= len(value) <= 20):
+            yield event.plain_result("QQ 号必须是 5-20 位数字。")
+            return
+        self.forward_to_qq = value
+        self.store.set_meta("forward_to_qq", value)
+        yield event.plain_result(f"已设置收藏图片自动转发到 QQ {value}。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @imgfilter.command("help")
     async def cmd_help(self, event: AstrMessageEvent):
         event.stop_event()
@@ -877,6 +914,7 @@ class Main(Star):
             "/imgfilter pause | resume\n"
             "/imgfilter test（附带图片/视频）\n"
             "/imgfilter confirm|reject <缓存ID前缀>\n"
+            "/imgfilter forward_to <QQ>（off 关闭）自动转发收藏图片\n"
             "审核/导出：AstrBot 管理界面 → 插件 → 可视化视图。"
         )
 

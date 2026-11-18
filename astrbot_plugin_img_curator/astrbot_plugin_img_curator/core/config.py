@@ -56,6 +56,7 @@ class PluginConfig:
     recognition_enabled: bool
     group_whitelist: list[str]
     group_blacklist: list[str]
+    forward_to_qq: str
     save_pending: bool
     dedupe: bool
     strip_metadata: bool
@@ -108,6 +109,7 @@ class PluginConfig:
             recognition_enabled=_bool(raw, "recognition_enabled", True),
             group_whitelist=_id_list(raw, "group_whitelist"),
             group_blacklist=_id_list(raw, "group_blacklist"),
+            forward_to_qq=str(raw.get("forward_to_qq", "") or "").strip(),
             save_pending=_bool(raw, "save_pending", True),
             dedupe=_bool(raw, "dedupe", True),
             strip_metadata=_bool(raw, "strip_metadata", True),

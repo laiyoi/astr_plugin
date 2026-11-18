@@ -45,6 +45,7 @@ class CuratorPipeline:
         self.model = model
         self.logger = logger
         self.paused = store.get_paused()
+        self.on_saved = None
         self._queue: asyncio.Queue[Job | None] | None = None
         self._worker: asyncio.Task | None = None
         self._stopping = False
@@ -334,6 +335,11 @@ class CuratorPipeline:
             self.store.incr_meta("duplicates")
             return
         await asyncio.to_thread(self.store.export_csv)
+        if status == "saved" and self.on_saved is not None:
+            try:
+                await self.on_saved(job, target, record)
+            except Exception:
+                self.logger.exception("转发收藏视频失败: %s", image_id)
         self.logger.info(
             "已%s视频 %s | label=%s | score=%.3f | %.0f ms",
             "收藏" if status == "saved" else "转入缓存",
@@ -477,6 +483,11 @@ class CuratorPipeline:
             self.store.incr_meta("duplicates")
             return
         await asyncio.to_thread(self.store.export_csv)
+        if status == "saved" and self.on_saved is not None:
+            try:
+                await self.on_saved(job, target, record)
+            except Exception:
+                self.logger.exception("转发收藏图片失败: %s", image_id)
         self.logger.info(
             "已%s %s | %s | label=%s | score=%.3f | %.0f ms",
             "收藏" if status == "saved" else "转入缓存",
